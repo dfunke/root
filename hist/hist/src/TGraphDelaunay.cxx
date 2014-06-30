@@ -293,6 +293,13 @@ void TGraphDelaunay::FindAllTriangles()
 
    if (fAllTri) return; else fAllTri = kTRUE;
 
+   // initialise the Delaunay algorithm if needed
+   if (!fInit) {
+      CreateTrianglesDataStructure();
+      FindHull();
+      fInit = kTRUE;
+   }
+
    Double_t xcntr,ycntr,xm,ym,xx,yy;
    Double_t sx,sy,nx,ny,mx,my,mdotn,nn,a;
    Int_t t1,t2,pa,na,ma,pb,nb,mb,p1=0,p2=0,m,n,p3=0;
