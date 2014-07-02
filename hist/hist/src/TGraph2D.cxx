@@ -1132,7 +1132,7 @@ TH2D *TGraph2D::GetHistogram(Option_t *option)
 
    // Add a TGraphDelaunay in the list of the fHistogram's functions
    TGraphDelaunay *dt = new TGraphDelaunay(this);
-   dt->SetMaxIter(fMaxIter);
+   //dt->SetMaxIter(fMaxIter);
    dt->SetMarginBinsContent(fZout);
    TList *hl = fHistogram->GetListOfFunctions();
    hl->Add(dt);

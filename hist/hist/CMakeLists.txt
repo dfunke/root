@@ -4,6 +4,8 @@
 
 set(libname Hist)
 
+find_package(CGAL)
+
 ROOT_USE_PACKAGE(core)
 ROOT_USE_PACKAGE(math)
 ROOT_USE_PACKAGE(graf2d)
@@ -12,6 +14,6 @@ include_directories(${CMAKE_SOURCE_DIR}/graf3d/g3d/inc)   # This is to avoid a c
 
 ROOT_GENERATE_DICTIONARY(G__${libname} *.h Math/*.h MODULE ${libname} LINKDEF LinkDef.h OPTIONS "-writeEmptyRootPCM")
 
-ROOT_LINKER_LIBRARY(${libname} *.cxx G__${libname}.cxx DEPENDENCIES Matrix MathCore)
+ROOT_LINKER_LIBRARY(${libname} *.cxx G__${libname}.cxx DEPENDENCIES Matrix MathCore ${CGAL_LIBRARY} ${GMP_LIBRARIES})
 ROOT_INSTALL_HEADERS()
 

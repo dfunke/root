@@ -26,13 +26,58 @@
 #include "TNamed.h"
 #endif
 
+#include <map>
+#include <functional>
+
 class TGraph2D;
 class TView;
 
+//CGAL
+#include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+#include <CGAL/Delaunay_triangulation_2.h>
+#include <CGAL/Triangulation_vertex_base_with_info_2.h>
+#include <CGAL/Interpolation_traits_2.h>
+#include <CGAL/natural_neighbor_coordinates_2.h>
+#include <CGAL/interpolation_functions.h>
+
 class TGraphDelaunay : public TNamed {
 
-private:
+public:
 
+	//Functor class for accessing the function values/gradients
+	template< class PointWithInfoMap, typename ValueType >
+	struct Data_access : public std::unary_function< typename PointWithInfoMap::key_type,
+				 std::pair<ValueType, bool> >
+	{
+
+	  Data_access(const PointWithInfoMap& points, const ValueType * values)
+			  : _points(points), _values(values){};
+
+	  std::pair< ValueType, bool>
+	  operator()(const typename PointWithInfoMap::key_type& p) const {
+		typename PointWithInfoMap::const_iterator mit = _points.find(p);
+		if(mit!= _points.end())
+		  return std::make_pair(_values[mit->second], true);
+		return std::make_pair(ValueType(), false);
+	  };
+
+	  const PointWithInfoMap& _points;
+	  const ValueType * _values;
+	};
+
+	typedef CGAL::Exact_predicates_inexact_constructions_kernel  K;
+	typedef CGAL::Triangulation_vertex_base_with_info_2<uint, K> Vb;
+	typedef CGAL::Triangulation_data_structure_2<Vb>             Tds;
+	typedef CGAL::Delaunay_triangulation_2<K, Tds>               Delaunay;
+	typedef CGAL::Interpolation_traits_2<K>                      Traits;
+	typedef K::FT                                                Coord_type;
+	typedef K::Point_2                                           Point;
+	typedef std::map<Point, Vb::Info, K::Less_xy_2>              PointWithInfoMap;
+	typedef Data_access< PointWithInfoMap, Double_t >            Value_access;
+
+	//typedef std::function<Double_t(Double_t)>                  Transformer;
+
+private:
    TGraphDelaunay(const TGraphDelaunay&); // Not implemented
    TGraphDelaunay& operator=(const TGraphDelaunay&); // Not implemented
 
@@ -40,66 +85,62 @@ protected:
 
    Int_t       fNdt;         //!Number of Delaunay triangles found
    Int_t       fNpoints;     //!Number of data points in fGraph2D
-   Int_t       fNhull;       //!Number of points in the hull
+
    Double_t   *fX;           //!Pointer to fGraph2D->fX
    Double_t   *fY;           //!Pointer to fGraph2D->fY
    Double_t   *fZ;           //!Pointer to fGraph2D->fZ
-   Double_t   *fXN;          //!fGraph2D vectors normalized of size fNpoints
-   Double_t   *fYN;          //!fGraph2D vectors normalized of size fNpoints
+
    Double_t    fXNmin;       //!Minimum value of fXN
    Double_t    fXNmax;       //!Maximum value of fXN
    Double_t    fYNmin;       //!Minimum value of fYN
    Double_t    fYNmax;       //!Maximum value of fYN
-   Double_t    fXoffset;     //!
-   Double_t    fYoffset;     //!Parameters used to normalize user data
-   Double_t    fXScaleFactor; //!
-   Double_t    fYScaleFactor; //!
+
+   //Transformer xTransformer; //!transform x values to mapped space
+   //Transformer yTransformer; //!transform y values to mapped space
+
+   Double_t    fOffsetX;      //!Normalization offset X
+   Double_t    fOffsetY;      //!Normalization offset Y
+
+   Double_t    fScaleFactorX; //!Normalization factor X
+   Double_t    fScaleFactorY; //!Normalization factor Y
+
    Double_t    fZout;        //!Histogram bin height for points lying outside the convex hull
-   Double_t   *fDist;        //!Array used to order mass points by distance
-   Int_t       fMaxIter;     //!Maximum number of iterations to find Delaunay triangles
-   Int_t       fTriedSize;   //!Real size of the fxTried arrays
-   Int_t      *fPTried;      //!
-   Int_t      *fNTried;      //!Delaunay triangles storage of size fNdt
-   Int_t      *fMTried;      //!
-   Int_t      *fHullPoints;  //!Hull points of size fNhull
-   Int_t      *fOrder;       //!Array used to order mass points by distance
-   Bool_t      fAllTri;      //!True if FindAllTriangles() has been performed on fGraph2D
+
    Bool_t      fInit;        //!True if CreateTrianglesDataStructure() and FindHull() have been performed
+
    TGraph2D   *fGraph2D;     //!2D graph containing the user data
 
-   void     CreateTrianglesDataStructure();
-   Bool_t   Enclose(Int_t T1, Int_t T2, Int_t T3, Int_t Ex) const;
-   void     FileIt(Int_t P, Int_t N, Int_t M);
-   void     FindHull();
-   Bool_t   InHull(Int_t E, Int_t X) const;
-   Double_t InterpolateOnPlane(Int_t TI1, Int_t TI2, Int_t TI3, Int_t E) const;
+   Delaunay fCGALdelaunay; //! CGAL delaunay triangulation object
+   PointWithInfoMap fNormalizedPoints; //! Normalized function values
 
 public:
 
    TGraphDelaunay();
    TGraphDelaunay(TGraph2D *g);
 
-   virtual ~TGraphDelaunay();
-
    Double_t  ComputeZ(Double_t x, Double_t y);
    void      FindAllTriangles();
    TGraph2D *GetGraph2D() const {return fGraph2D;}
    Double_t  GetMarginBinsContent() const {return fZout;}
    Int_t     GetNdt() const {return fNdt;}
-   Int_t    *GetPTried() const {return fPTried;}
-   Int_t    *GetNTried() const {return fNTried;}
-   Int_t    *GetMTried() const {return fMTried;}
-   Double_t *GetXN() const {return fXN;}
-   Double_t *GetYN() const {return fYN;}
    Double_t  GetXNmin() const {return fXNmin;}
    Double_t  GetXNmax() const {return fXNmax;}
    Double_t  GetYNmin() const {return fYNmin;}
    Double_t  GetYNmax() const {return fYNmax;}
    Double_t  Interpolate(Double_t x, Double_t y);
-   void      SetMaxIter(Int_t n=100000);
    void      SetMarginBinsContent(Double_t z=0.);
 
+   Delaunay::Finite_faces_iterator begin() const { return fCGALdelaunay.finite_faces_begin(); }
+   Delaunay::Finite_faces_iterator end()  const { return fCGALdelaunay.finite_faces_end(); }
+
    ClassDef(TGraphDelaunay,1)  // Delaunay triangulation
+
+private:
+
+   inline double linear_transform(double x, double offset, double factor){
+	   return (x+offset)*factor;
+   }
+
 };
 
 #endif

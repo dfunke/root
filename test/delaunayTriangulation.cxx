@@ -13,14 +13,28 @@
 #include "TGraph2D.h"
 #include "TGraphDelaunay.h"
 
-int main(int argc, char **argv) {
+void printDelaunay(const TGraphDelaunay & gd){
+
+	auto graph = gd.GetGraph2D();
+
+	for(const auto & face : gd){
+		printf("[%u](%f,%f) - [%u](%f,%f) - [%u](%f,%f)\n",
+				face.vertex(0)->info(), graph->GetX()[face.vertex(0)->info()], graph->GetY()[face.vertex(0)->info()],
+				face.vertex(1)->info(), graph->GetX()[face.vertex(1)->info()], graph->GetY()[face.vertex(1)->info()],
+				face.vertex(2)->info(), graph->GetX()[face.vertex(2)->info()], graph->GetY()[face.vertex(2)->info()]);
+	}
+
+}
+
+int main() {
 
 	const int EXP = 2;
+	const bool VERBOSE = true;
 
 	TGraph2D graph;
 	graph.SetPoint(0, 0.1, 0.2, 0);
 	graph.SetPoint(1, 0.5, 0.4, 0);
-	graph.SetPoint(2, 0.3, 0.3, 0);
+	graph.SetPoint(2, 0.3, 0.2, 0);
 	graph.SetPoint(3, 0.6, 0.1, 0);
 
 
@@ -28,10 +42,14 @@ int main(int argc, char **argv) {
 
 	delaunay.FindAllTriangles();
 
-	if(delaunay.GetNdt() == EXP)
-		return 0;
-	else {
+	if(delaunay.GetNdt() == EXP){
+		if(VERBOSE) printDelaunay(delaunay);
+
+	return 0;
+	} else {
 		printf("Expected: %i\t Gotten: %i\n", EXP, delaunay.GetNdt());
+		if(VERBOSE) printDelaunay(delaunay);
+
 		return 4;
 	}
 

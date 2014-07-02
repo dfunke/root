@@ -36,8 +36,6 @@ protected:
    Double_t   *fX;            //!Pointer to fGraph2D->fX
    Double_t   *fY;            //!Pointer to fGraph2D->fY
    Double_t   *fZ;            //!Pointer to fGraph2D->fZ
-   Double_t   *fXN;           //!Pointer to fDelaunay->fXN
-   Double_t   *fYN;           //!Pointer to fDelaunay->fYN
    Double_t   *fEX;           //!Pointer to fGraph2D->fXE
    Double_t   *fEY;           //!Pointer to fGraph2D->fYE
    Double_t   *fEZ;           //!Pointer to fGraph2D->fZE
@@ -53,15 +51,12 @@ protected:
    Double_t    fZmax;         //!
    Int_t       fNpoints;      //!Equal to fGraph2D->fNpoints
    Int_t       fNdt;          //!Equal to fDelaunay->fNdt
-   Int_t      *fPTried;       //!Pointer to fDelaunay->fPTried
-   Int_t      *fNTried;       //!Pointer to fDelaunay->fNTried
-   Int_t      *fMTried;       //!Pointer to fDelaunay->fMTried
 
    TGraphDelaunay *fDelaunay; // Pointer to the TGraphDelaunay to be painted
    TGraph2D *fGraph2D;        // Pointer to the TGraph2D in fDelaunay
 
    void     FindTriangles();
-   void     PaintLevels(Int_t *T, Double_t *x, Double_t *y, Int_t nblev=0, Double_t *glev=0);
+   void     PaintLevels(Int_t *v, Double_t *x, Double_t *y, Int_t nblev=0, Double_t *glev=0);
    void     PaintPolyMarker0(Int_t n, Double_t *x, Double_t *y);
 
 public:
