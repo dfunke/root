@@ -11,9 +11,11 @@
  */
 
 #include "TGraph2D.h"
-#include "TGraphDelaunay.h"
+#include "TGraphDelaunay2D.h"
 
-void printDelaunay(const TGraphDelaunay & gd){
+#include "delaunayTriangulation_bug.h"
+
+void printDelaunay(const TGraphDelaunay2D & gd){
 
 	auto graph = gd.GetGraph2D();
 
@@ -29,18 +31,22 @@ void printDelaunay(const TGraphDelaunay & gd){
 int main() {
 
 	const int EXP = 2;
-	const bool VERBOSE = true;
+	const bool VERBOSE = false;
 
-	TGraph2D graph;
-	graph.SetPoint(0, 0.1, 0.2, 0);
-	graph.SetPoint(1, 0.5, 0.4, 0);
-	graph.SetPoint(2, 0.3, 0.2, 0);
-	graph.SetPoint(3, 0.6, 0.1, 0);
+	TGraph2D * graph = getGraph();
 
+	//auto h = graph->GetHistogram("");
 
-	TGraphDelaunay delaunay(&graph);
+	TGraphDelaunay2D delaunay(graph);
 
-	delaunay.FindAllTriangles();
+	for (int i = 0; i < 100; i++) {
+		Double_t pt = 50 + 0.001;
+		Double_t eta = 1. + 0.01 * i + 0.001;
+		Double_t res = graph->Interpolate(pt, eta);
+		Double_t res2 = delaunay.ComputeZ(pt, eta);
+		Double_t res3 = delaunay.Interpolate(pt, eta);
+		std::cout << eta << " " << res << "  " << res2 << "  " << res3 << std::endl;
+	}
 
 	if(delaunay.GetNdt() == EXP){
 		if(VERBOSE) printDelaunay(delaunay);

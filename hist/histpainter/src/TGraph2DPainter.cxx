@@ -15,7 +15,7 @@
 #include "TList.h"
 #include "TGraph.h"
 #include "TGraph2D.h"
-#include "TGraphDelaunay.h"
+#include "TGraphDelaunay2D.h"
 #include "TPolyLine.h"
 #include "TPolyMarker.h"
 #include "TVirtualPad.h"
@@ -37,7 +37,7 @@ ClassImp(TGraph2DPainter)
 
 //______________________________________________________________________________
 //
-// TGraph2DPainter paints a TGraphDelaunay
+// TGraph2DPainter paints a TGraphDelaunay2D
 //
 
 
@@ -70,7 +70,7 @@ TGraph2DPainter::TGraph2DPainter()
 
 
 //______________________________________________________________________________
-TGraph2DPainter::TGraph2DPainter(TGraphDelaunay *gd)
+TGraph2DPainter::TGraph2DPainter(TGraphDelaunay2D *gd)
 {
    // TGraph2DPainter constructor
 
@@ -357,7 +357,7 @@ L02:
 //______________________________________________________________________________
 void TGraph2DPainter::Paint(Option_t *option)
 {
-   // Paint a TGraphDelaunay according to the value of "option":
+   // Paint a TGraphDelaunay2D according to the value of "option":
    //
    //   "TRI"  : The Delaunay triangles are drawn using filled area.
    //            An hidden surface drawing technique is used. The surface is
@@ -978,7 +978,7 @@ void TGraph2DPainter::PaintTriangles(Option_t *option)
 	   reverse = kTRUE;
    }
 
-   typedef std::pair<Double_t, TGraphDelaunay::Delaunay::Face_handle> DistEntry;
+   typedef std::pair<Double_t, TGraphDelaunay2D::Delaunay::Face_handle> DistEntry;
    std::vector<DistEntry> dist;
    for(auto it = fDelaunay->begin(); it != fDelaunay->end(); ++it){
 	   auto face = *it;

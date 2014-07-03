@@ -48,7 +48,7 @@
 #include "TColor.h"
 #include "TPainter3dAlgorithms.h"
 #include "TGraph2DPainter.h"
-#include "TGraphDelaunay.h"
+#include "TGraphDelaunay2D.h"
 #include "TView.h"
 #include "TMath.h"
 #include "TRandom2.h"
@@ -3523,11 +3523,11 @@ TList *THistPainter::GetContourList(Double_t contour) const
    Get a contour (as a list of TGraphs) using the Delaunay triangulation.
    End_html */
 
-   TGraphDelaunay *dt;
+   TGraphDelaunay2D *dt;
 
-   // Check if fH contains a TGraphDelaunay
+   // Check if fH contains a TGraphDelaunay2D
    TList *hl = fH->GetListOfFunctions();
-   dt = (TGraphDelaunay*)hl->FindObject("TGraphDelaunay");
+   dt = (TGraphDelaunay2D*)hl->FindObject("TGraphDelaunay2D");
    if (!dt) return 0;
 
    gCurrentHist = fH;
@@ -5378,9 +5378,9 @@ void THistPainter::PaintContour(Option_t *option)
    }
 
    if (Hoption.Contour == 15) {
-      TGraphDelaunay *dt;
+      TGraphDelaunay2D *dt;
       TList *hl = fH->GetListOfFunctions();
-      dt = (TGraphDelaunay*)hl->FindObject("TGraphDelaunay");
+      dt = (TGraphDelaunay2D*)hl->FindObject("TGraphDelaunay2D");
       if (!dt) return;
       if (!fGraph2DPainter) fGraph2DPainter = new TGraph2DPainter(dt);
       fGraph2DPainter->Paint(option);
@@ -8532,11 +8532,11 @@ void THistPainter::PaintTriangles(Option_t *option)
    Control function to draw a table using Delaunay triangles.
    End_html */
 
-   TGraphDelaunay *dt;
+   TGraphDelaunay2D *dt;
 
-   // Check if fH contains a TGraphDelaunay
+   // Check if fH contains a TGraphDelaunay2D
    TList *hl = fH->GetListOfFunctions();
-   dt = (TGraphDelaunay*)hl->FindObject("TGraphDelaunay");
+   dt = (TGraphDelaunay2D*)hl->FindObject("TGraphDelaunay2D");
    if (!dt) return;
 
    // If needed, create a TGraph2DPainter

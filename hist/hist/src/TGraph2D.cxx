@@ -16,7 +16,7 @@
 #include "TF2.h"
 #include "TList.h"
 #include "TGraph2D.h"
-#include "TGraphDelaunay.h"
+#include "TGraphDelaunay2D.h"
 #include "TVirtualPad.h"
 #include "TVirtualFitter.h"
 #include "TPluginManager.h"
@@ -1047,7 +1047,7 @@ TH2D *TGraph2D::GetHistogram(Option_t *option)
 {
    // By default returns a pointer to the Delaunay histogram. If fHistogram
    // doesn't exist, books the 2D histogram fHistogram with a margin around
-   // the hull. Calls TGraphDelaunay::Interpolate at each bin centre to build up
+   // the hull. Calls TGraphDelaunay2D::Interpolate at each bin centre to build up
    // an interpolated 2D histogram.
    // If the "empty" option is selected, returns an empty histogram booked with
    // the limits of fX, fY and fZ. This option is used when the data set is
@@ -1130,8 +1130,8 @@ TH2D *TGraph2D::GetHistogram(Option_t *option)
       hymax = fHistogram->GetYaxis()->GetXmax();
    }
 
-   // Add a TGraphDelaunay in the list of the fHistogram's functions
-   TGraphDelaunay *dt = new TGraphDelaunay(this);
+   // Add a TGraphDelaunay2D in the list of the fHistogram's functions
+   TGraphDelaunay2D *dt = new TGraphDelaunay2D(this);
    //dt->SetMaxIter(fMaxIter);
    dt->SetMarginBinsContent(fZout);
    TList *hl = fHistogram->GetListOfFunctions();
@@ -1256,12 +1256,12 @@ Double_t TGraph2D::Interpolate(Double_t x, Double_t y)
       return 0;
    }
 
-   TGraphDelaunay *dt;
+   TGraphDelaunay2D *dt;
 
    if (!fHistogram) GetHistogram("empty");
 
    TList *hl = fHistogram->GetListOfFunctions();
-   dt = (TGraphDelaunay*)hl->FindObject("TGraphDelaunay");
+   dt = (TGraphDelaunay2D*)hl->FindObject("TGraphDelaunay2D");
 
    return dt->ComputeZ(x, y);
 }
@@ -1551,7 +1551,7 @@ void TGraph2D::SetMargin(Double_t m)
 //______________________________________________________________________________
 void TGraph2D::SetMarginBinsContent(Double_t z)
 {
-   // Sets the histogram bin height for points lying outside the TGraphDelaunay
+   // Sets the histogram bin height for points lying outside the TGraphDelaunay2D
    // convex hull ie: the bins in the margin.
 
    fZout = z;

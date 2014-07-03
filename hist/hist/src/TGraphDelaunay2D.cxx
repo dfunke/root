@@ -1,4 +1,4 @@
-// @(#)root/hist:$Id: TGraphDelaunay.cxx,v 1.00
+// @(#)root/hist:$Id: TGraphDelaunay2D.cxx,v 1.00
 // Author: Olivier Couet, Luke Jones (Royal Holloway, University of London)
 
 /*************************************************************************
@@ -11,14 +11,14 @@
 
 #include "TMath.h"
 #include "TGraph2D.h"
-#include "TGraphDelaunay.h"
+#include "TGraphDelaunay2D.h"
 
-ClassImp(TGraphDelaunay)
+ClassImp(TGraphDelaunay2D)
 
 
 //______________________________________________________________________________
 //
-// TGraphDelaunay generates a Delaunay triangulation of a TGraph2D. This
+// TGraphDelaunay2D generates a Delaunay triangulation of a TGraph2D. This
 // triangulation code derives from an implementation done by Luke Jones
 // (Royal Holloway, University of London) in April 2002 in the PAW context.
 //
@@ -46,10 +46,10 @@ gives a nice practical view of Delaunay triangulation and Voronoi diagram.
 
 
 //______________________________________________________________________________
-TGraphDelaunay::TGraphDelaunay()
-            : TNamed("TGraphDelaunay","TGraphDelaunay")
+TGraphDelaunay2D::TGraphDelaunay2D()
+            : TNamed("TGraphDelaunay2D","TGraphDelaunay2D")
 {
-   // TGraphDelaunay default constructor
+   // TGraphDelaunay2D default constructor
 
    fGraph2D      = 0;
    fX            = 0;
@@ -71,10 +71,10 @@ TGraphDelaunay::TGraphDelaunay()
 
 
 //______________________________________________________________________________
-TGraphDelaunay::TGraphDelaunay(TGraph2D *g)
-            : TNamed("TGraphDelaunay","TGraphDelaunay")
+TGraphDelaunay2D::TGraphDelaunay2D(TGraph2D *g)
+            : TNamed("TGraphDelaunay2D","TGraphDelaunay2D")
 {
-   // TGraphDelaunay normal constructor
+   // TGraphDelaunay2D normal constructor
 
    fGraph2D      = g;
    fX            = fGraph2D->GetX();
@@ -95,7 +95,7 @@ TGraphDelaunay::TGraphDelaunay(TGraph2D *g)
 }
 
 //______________________________________________________________________________
-Double_t TGraphDelaunay::ComputeZ(Double_t x, Double_t y)
+Double_t TGraphDelaunay2D::ComputeZ(Double_t x, Double_t y)
 {
    // Return the z value corresponding to the (x,y) point in fGraph2D
 
@@ -119,7 +119,7 @@ Double_t TGraphDelaunay::ComputeZ(Double_t x, Double_t y)
 }
 
 //______________________________________________________________________________
-void TGraphDelaunay::FindAllTriangles()
+void TGraphDelaunay2D::FindAllTriangles()
 {
 
    if (fInit) return; else fInit = kTRUE;
@@ -166,7 +166,7 @@ void TGraphDelaunay::FindAllTriangles()
 }
 
 //______________________________________________________________________________
-Double_t TGraphDelaunay::Interpolate(Double_t xx, Double_t yy)
+Double_t TGraphDelaunay2D::Interpolate(Double_t xx, Double_t yy)
 {
    // Finds the Delaunay triangle that the point (xi,yi) sits in (if any) and
    // calculate a z-value for it by linearly interpolating the z-values that
@@ -195,7 +195,7 @@ Double_t TGraphDelaunay::Interpolate(Double_t xx, Double_t yy)
 }
 
 //______________________________________________________________________________
-void TGraphDelaunay::SetMarginBinsContent(Double_t z)
+void TGraphDelaunay2D::SetMarginBinsContent(Double_t z)
 {
    // Sets the histogram bin height for points lying outside the convex hull ie:
    // the bins in the margin.

@@ -446,7 +446,7 @@ D: Optimizations of the write portion of TStreamerInfo and TBranchElement.
 
 N: Luke Jones
 E: jones@netoffice.com
-D: class TGraphDelaunay
+D: class TGraphDelaunay2D
 
 N: Pierre Juillot
 E: juillot@in2p3.fr

@@ -1,4 +1,4 @@
-// @(#)root/hist:$Id: TGraphDelaunay.h,v 1.00
+// @(#)root/hist:$Id: TGraphDelaunay2D.h,v 1.00
 // Author: Olivier Couet, Luke Jones (Royal Holloway, University of London)
 
 /*************************************************************************
@@ -9,13 +9,13 @@
  * For the list of contributors see $ROOTSYS/README/CREDITS.             *
  *************************************************************************/
 
-#ifndef ROOT_TGraphDelaunay
-#define ROOT_TGraphDelaunay
+#ifndef ROOT_TGraphDelaunay2D
+#define ROOT_TGraphDelaunay2D
 
 
 //////////////////////////////////////////////////////////////////////////
 //                                                                      //
-// TGraphDelaunay                                                       //
+// TGraphDelaunay2D                                                     //
 //                                                                      //
 // This class uses the Delaunay triangles technique to interpolate and  //
 // render the data set.                                                 //
@@ -40,7 +40,7 @@ class TView;
 #include <CGAL/natural_neighbor_coordinates_2.h>
 #include <CGAL/interpolation_functions.h>
 
-class TGraphDelaunay : public TNamed {
+class TGraphDelaunay2D : public TNamed {
 
 public:
 
@@ -78,8 +78,8 @@ public:
 	//typedef std::function<Double_t(Double_t)>                  Transformer;
 
 private:
-   TGraphDelaunay(const TGraphDelaunay&); // Not implemented
-   TGraphDelaunay& operator=(const TGraphDelaunay&); // Not implemented
+   TGraphDelaunay2D(const TGraphDelaunay2D&); // Not implemented
+   TGraphDelaunay2D& operator=(const TGraphDelaunay2D&); // Not implemented
 
 protected:
 
@@ -115,8 +115,8 @@ protected:
 
 public:
 
-   TGraphDelaunay();
-   TGraphDelaunay(TGraph2D *g);
+   TGraphDelaunay2D();
+   TGraphDelaunay2D(TGraph2D *g);
 
    Double_t  ComputeZ(Double_t x, Double_t y);
    void      FindAllTriangles();
@@ -133,7 +133,7 @@ public:
    Delaunay::Finite_faces_iterator begin() const { return fCGALdelaunay.finite_faces_begin(); }
    Delaunay::Finite_faces_iterator end()  const { return fCGALdelaunay.finite_faces_end(); }
 
-   ClassDef(TGraphDelaunay,1)  // Delaunay triangulation
+   ClassDef(TGraphDelaunay2D,1)  // Delaunay triangulation
 
 private:
 

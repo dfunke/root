@@ -26,7 +26,7 @@
 #endif
 
 class TGraph2D;
-class TGraphDelaunay;
+class TGraphDelaunay2D;
 class TList;
 
 class TGraph2DPainter : public TObject {
@@ -52,7 +52,7 @@ protected:
    Int_t       fNpoints;      //!Equal to fGraph2D->fNpoints
    Int_t       fNdt;          //!Equal to fDelaunay->fNdt
 
-   TGraphDelaunay *fDelaunay; // Pointer to the TGraphDelaunay to be painted
+   TGraphDelaunay2D *fDelaunay; // Pointer to the TGraphDelaunay2D to be painted
    TGraph2D *fGraph2D;        // Pointer to the TGraph2D in fDelaunay
 
    void     FindTriangles();
@@ -62,7 +62,7 @@ protected:
 public:
 
    TGraph2DPainter();
-   TGraph2DPainter(TGraphDelaunay *gd);
+   TGraph2DPainter(TGraphDelaunay2D *gd);
 
    virtual ~TGraph2DPainter();
 
