@@ -118,8 +118,9 @@ public:
    TGraphDelaunay2D();
    TGraphDelaunay2D(TGraph2D *g);
 
-   Double_t  ComputeZ(Double_t x, Double_t y);
+   Double_t  Eval(Double_t x, Double_t y);
    void      FindAllTriangles();
+
    TGraph2D *GetGraph2D() const {return fGraph2D;}
    Double_t  GetMarginBinsContent() const {return fZout;}
    Int_t     GetNdt() const {return fNdt;}
@@ -127,7 +128,7 @@ public:
    Double_t  GetXNmax() const {return fXNmax;}
    Double_t  GetYNmin() const {return fYNmin;}
    Double_t  GetYNmax() const {return fYNmax;}
-   Double_t  Interpolate(Double_t x, Double_t y);
+
    void      SetMarginBinsContent(Double_t z=0.);
 
    Delaunay::Finite_faces_iterator begin() const { return fCGALdelaunay.finite_faces_begin(); }
@@ -140,6 +141,8 @@ private:
    inline double linear_transform(double x, double offset, double factor){
 	   return (x+offset)*factor;
    }
+
+   Double_t  InterpolateNormalized(Double_t x, Double_t y);
 
 };
 

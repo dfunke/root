@@ -95,7 +95,7 @@ TGraphDelaunay2D::TGraphDelaunay2D(TGraph2D *g)
 }
 
 //______________________________________________________________________________
-Double_t TGraphDelaunay2D::ComputeZ(Double_t x, Double_t y)
+Double_t TGraphDelaunay2D::Eval(Double_t x, Double_t y)
 {
    // Return the z value corresponding to the (x,y) point in fGraph2D
 
@@ -109,11 +109,11 @@ Double_t TGraphDelaunay2D::ComputeZ(Double_t x, Double_t y)
    Double_t xx, yy;
    xx = linear_transform(x, fOffsetX, fScaleFactorX); //xx = xTransformer(x);
    yy = linear_transform(y, fOffsetY, fScaleFactorY); //yy = yTransformer(y);
-   Double_t zz = Interpolate(xx, yy);
+   Double_t zz = InterpolateNormalized(xx, yy);
 
    // Wrong zeros may appear when points sit on a regular grid.
    // The following line try to avoid this problem.
-   if (zz==0) zz = Interpolate(xx+0.0001, yy);
+   if (zz==0) zz = InterpolateNormalized(xx+0.0001, yy);
 
    return zz;
 }
@@ -166,7 +166,7 @@ void TGraphDelaunay2D::FindAllTriangles()
 }
 
 //______________________________________________________________________________
-Double_t TGraphDelaunay2D::Interpolate(Double_t xx, Double_t yy)
+Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
 {
    // Finds the Delaunay triangle that the point (xi,yi) sits in (if any) and
    // calculate a z-value for it by linearly interpolating the z-values that
@@ -176,7 +176,7 @@ Double_t TGraphDelaunay2D::Interpolate(Double_t xx, Double_t yy)
     FindAllTriangles();
 
    //coordinate computation
-	K::Point_2 p(xx, yy);
+	Point p(xx, yy);
 
 	std::vector<std::pair<Point, Coord_type> > coords;
 	auto nn = CGAL::natural_neighbor_coordinates_2(fCGALdelaunay, p,
@@ -185,6 +185,7 @@ Double_t TGraphDelaunay2D::Interpolate(Double_t xx, Double_t yy)
 	if(!nn.third) //neighbor finding was NOT successfull, return standard value
 		return fZout;
 
+	//printf("found neighbors %u\n", coords.size());
 
 	Coord_type res = CGAL::linear_interpolation(coords.begin(), coords.end(),
 			nn.second, Value_access(fNormalizedPoints, fZ));

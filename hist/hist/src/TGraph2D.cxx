@@ -1167,7 +1167,7 @@ TH2D *TGraph2D::GetHistogram(Option_t *option)
       x  = hxmin + (ix - 0.5) * dx;
       for (Int_t iy = 1; iy <= fNpy; iy++) {
          y  = hymin + (iy - 0.5) * dy;
-         z  = dt->ComputeZ(x, y);
+         z  = dt->Eval(x, y);
          fHistogram->Fill(x, y, z);
       }
    }
@@ -1263,7 +1263,7 @@ Double_t TGraph2D::Interpolate(Double_t x, Double_t y)
    TList *hl = fHistogram->GetListOfFunctions();
    dt = (TGraphDelaunay2D*)hl->FindObject("TGraphDelaunay2D");
 
-   return dt->ComputeZ(x, y);
+   return dt->Eval(x, y);
 }
 
 

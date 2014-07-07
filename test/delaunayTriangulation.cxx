@@ -35,7 +35,7 @@ int main() {
 
 	TGraph2D * graph = getGraph();
 
-	//auto h = graph->GetHistogram("");
+	auto h = graph->GetHistogram("");
 
 	TGraphDelaunay2D delaunay(graph);
 
@@ -43,9 +43,8 @@ int main() {
 		Double_t pt = 50 + 0.001;
 		Double_t eta = 1. + 0.01 * i + 0.001;
 		Double_t res = graph->Interpolate(pt, eta);
-		Double_t res2 = delaunay.ComputeZ(pt, eta);
-		Double_t res3 = delaunay.Interpolate(pt, eta);
-		std::cout << eta << " " << res << "  " << res2 << "  " << res3 << std::endl;
+		Double_t res2 = delaunay.Eval(pt, eta);
+		std::cout << eta << " " << res << "  " << res2 << std::endl;
 	}
 
 	if(delaunay.GetNdt() == EXP){
