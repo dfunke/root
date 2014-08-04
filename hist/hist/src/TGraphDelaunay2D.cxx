@@ -13,6 +13,8 @@
 #include "TGraph2D.h"
 #include "TGraphDelaunay2D.h"
 
+#include <thread>
+
 ClassImp(TGraphDelaunay2D)
 
 
@@ -162,6 +164,24 @@ void TGraphDelaunay2D::FindAllTriangles()
 
    fNdt = fCGALdelaunay.number_of_faces();
 
+   std::transform(fCGALdelaunay.finite_faces_begin(), fCGALdelaunay.finite_faces_end(), std::back_inserter(fTriangles),
+		   [] (const Delaunay::Face face) -> Triangle {
+
+	   Triangle tri;
+
+	   auto transform = [&] (const uint i) {
+		   tri.x[i] = face.vertex(i)->point().x();
+		   tri.y[i] = face.vertex(i)->point().y();
+		   tri.idx[i] = face.vertex(i)->info();
+	   };
+
+	   transform(0);
+	   transform(1);
+	   transform(2);
+
+	   return tri;
+
+   });
 
 }
 
@@ -182,6 +202,8 @@ Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
 	auto nn = CGAL::natural_neighbor_coordinates_2(fCGALdelaunay, p,
 			std::back_inserter(coords));
 
+	std::cout << std::this_thread::get_id() << ": Found " << coords.size() << " points" << std::endl;
+
 	if(!nn.third) //neighbor finding was NOT successfull, return standard value
 		return fZout;
 
@@ -190,7 +212,7 @@ Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
 	Coord_type res = CGAL::linear_interpolation(coords.begin(), coords.end(),
 			nn.second, Value_access(fNormalizedPoints, fZ));
 
-
+	std::cout << std::this_thread::get_id() << ": Result " << res << std::endl;
 
    return res;
 }

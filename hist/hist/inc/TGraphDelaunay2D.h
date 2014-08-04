@@ -44,6 +44,14 @@ class TGraphDelaunay2D : public TNamed {
 
 public:
 
+	struct Triangle {
+		Double_t x[3];
+		Double_t y[3];
+		UInt_t idx[3];
+	};
+
+	typedef std::vector<Triangle> Triangles;
+
 	//Functor class for accessing the function values/gradients
 	template< class PointWithInfoMap, typename ValueType >
 	struct Data_access : public std::unary_function< typename PointWithInfoMap::key_type,
@@ -110,6 +118,8 @@ protected:
 
    TGraph2D   *fGraph2D;     //!2D graph containing the user data
 
+   Triangles   fTriangles;   //!Triangles of Triangulation
+
    Delaunay fCGALdelaunay; //! CGAL delaunay triangulation object
    PointWithInfoMap fNormalizedPoints; //! Normalized function values
 
@@ -131,8 +141,8 @@ public:
 
    void      SetMarginBinsContent(Double_t z=0.);
 
-   Delaunay::Finite_faces_iterator begin() const { return fCGALdelaunay.finite_faces_begin(); }
-   Delaunay::Finite_faces_iterator end()  const { return fCGALdelaunay.finite_faces_end(); }
+   Triangles::const_iterator begin() const { return fTriangles.begin(); }
+   Triangles::const_iterator end()  const { return fTriangles.end(); }
 
    ClassDef(TGraphDelaunay2D,1)  // Delaunay triangulation
 
