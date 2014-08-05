@@ -15,15 +15,17 @@
 
 #include "delaunayTriangulation_bug.h"
 
+#include <iostream>
+
 void printDelaunay(const TGraphDelaunay2D & gd){
 
 	auto graph = gd.GetGraph2D();
 
-	for(const auto & face : gd){
+	for(const auto & triangle : gd){
 		printf("[%u](%f,%f) - [%u](%f,%f) - [%u](%f,%f)\n",
-				face.vertex(0)->info(), graph->GetX()[face.vertex(0)->info()], graph->GetY()[face.vertex(0)->info()],
-				face.vertex(1)->info(), graph->GetX()[face.vertex(1)->info()], graph->GetY()[face.vertex(1)->info()],
-				face.vertex(2)->info(), graph->GetX()[face.vertex(2)->info()], graph->GetY()[face.vertex(2)->info()]);
+				triangle.idx[0], graph->GetX()[triangle.idx[0]], graph->GetY()[triangle.idx[0]],
+				triangle.idx[1], graph->GetX()[triangle.idx[1]], graph->GetY()[triangle.idx[1]],
+				triangle.idx[2], graph->GetX()[triangle.idx[2]], graph->GetY()[triangle.idx[2]]);
 	}
 
 }

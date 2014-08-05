@@ -111,11 +111,11 @@ Double_t TGraphDelaunay2D::Eval(Double_t x, Double_t y)
    Double_t xx, yy;
    xx = linear_transform(x, fOffsetX, fScaleFactorX); //xx = xTransformer(x);
    yy = linear_transform(y, fOffsetY, fScaleFactorY); //yy = yTransformer(y);
-   Double_t zz = InterpolateNormalized(xx, yy);
+   Double_t zz = _interpolateNormalized(xx, yy);
 
    // Wrong zeros may appear when points sit on a regular grid.
    // The following line try to avoid this problem.
-   if (zz==0) zz = InterpolateNormalized(xx+0.0001, yy);
+   if (zz==0) zz = _interpolateNormalized(xx+0.0001, yy);
 
    return zz;
 }
@@ -152,41 +152,62 @@ void TGraphDelaunay2D::FindAllTriangles()
    fYNmax        = linear_transform(ymax, fOffsetY, fScaleFactorY); //yTransformer(ymax);
    fYNmin        = linear_transform(ymin, fOffsetY, fScaleFactorY); //yTransformer(ymin);
 
-   for (Int_t n=0; n<fNpoints; n++) {
-	   //Point p(xTransformer(fX[n]), yTransformer(fY[n]));
-	   Point p(linear_transform(fX[n], fOffsetX, fScaleFactorX),
-			   linear_transform(fY[n], fOffsetY, fScaleFactorY));
+   _normalizePoints(); // call backend specific point normalization
 
-	   fNormalizedPoints.insert(std::make_pair(p, n));
-   }
+   _findTriangles(); // call backend specific triangle finding
 
-   fCGALdelaunay.insert(fNormalizedPoints.begin(), fNormalizedPoints.end());
-
-   fNdt = fCGALdelaunay.number_of_faces();
-
-   std::transform(fCGALdelaunay.finite_faces_begin(), fCGALdelaunay.finite_faces_end(), std::back_inserter(fTriangles),
-		   [] (const Delaunay::Face face) -> Triangle {
-
-	   Triangle tri;
-
-	   auto transform = [&] (const uint i) {
-		   tri.x[i] = face.vertex(i)->point().x();
-		   tri.y[i] = face.vertex(i)->point().y();
-		   tri.idx[i] = face.vertex(i)->info();
-	   };
-
-	   transform(0);
-	   transform(1);
-	   transform(2);
-
-	   return tri;
-
-   });
+   fNdt = fTriangles.size();
 
 }
 
 //______________________________________________________________________________
-Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
+void TGraphDelaunay2D::SetMarginBinsContent(Double_t z)
+{
+   // Sets the histogram bin height for points lying outside the convex hull ie:
+   // the bins in the margin.
+
+   fZout = z;
+}
+
+//______________________________________________________________________________
+// backend specific implementations
+#ifdef HAS_CGAL
+
+void TGraphDelaunay2D::_normalizePoints() {
+	for (Int_t n = 0; n < fNpoints; n++) {
+		//Point p(xTransformer(fX[n]), yTransformer(fY[n]));
+		Point p(linear_transform(fX[n], fOffsetX, fScaleFactorX),
+				linear_transform(fY[n], fOffsetY, fScaleFactorY));
+
+		fNormalizedPoints.insert(std::make_pair(p, n));
+	}
+}
+
+void TGraphDelaunay2D::_findTriangles() {
+	fCGALdelaunay.insert(fNormalizedPoints.begin(), fNormalizedPoints.end());
+
+	std::transform(fCGALdelaunay.finite_faces_begin(),
+			fCGALdelaunay.finite_faces_end(), std::back_inserter(fTriangles),
+			[] (const Delaunay::Face face) -> Triangle {
+
+				Triangle tri;
+
+				auto transform = [&] (const uint i) {
+					tri.x[i] = face.vertex(i)->point().x();
+					tri.y[i] = face.vertex(i)->point().y();
+					tri.idx[i] = face.vertex(i)->info();
+				};
+
+				transform(0);
+				transform(1);
+				transform(2);
+
+				return tri;
+
+			});
+}
+
+Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
 {
    // Finds the Delaunay triangle that the point (xi,yi) sits in (if any) and
    // calculate a z-value for it by linearly interpolating the z-values that
@@ -202,7 +223,7 @@ Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
 	auto nn = CGAL::natural_neighbor_coordinates_2(fCGALdelaunay, p,
 			std::back_inserter(coords));
 
-	std::cout << std::this_thread::get_id() << ": Found " << coords.size() << " points" << std::endl;
+	//std::cout << std::this_thread::get_id() << ": Found " << coords.size() << " points" << std::endl;
 
 	if(!nn.third) //neighbor finding was NOT successfull, return standard value
 		return fZout;
@@ -212,16 +233,163 @@ Double_t TGraphDelaunay2D::InterpolateNormalized(Double_t xx, Double_t yy)
 	Coord_type res = CGAL::linear_interpolation(coords.begin(), coords.end(),
 			nn.second, Value_access(fNormalizedPoints, fZ));
 
-	std::cout << std::this_thread::get_id() << ": Result " << res << std::endl;
+	//std::cout << std::this_thread::get_id() << ": Result " << res << std::endl;
 
    return res;
 }
 
-//______________________________________________________________________________
-void TGraphDelaunay2D::SetMarginBinsContent(Double_t z)
-{
-   // Sets the histogram bin height for points lying outside the convex hull ie:
-   // the bins in the margin.
+#else
 
-   fZout = z;
+// fallback to triangle library
+#include "triangle.h"
+
+void TGraphDelaunay2D::_normalizePoints() {
+	for (Int_t n = 0; n < fNpoints; n++) {
+		fXN.push_back(linear_transform(fX[n], fOffsetX, fScaleFactorX));
+		fYN.push_back(linear_transform(fY[n], fOffsetY, fScaleFactorY));
+	}
 }
+
+void TGraphDelaunay2D::_findTriangles() {
+
+	auto initStruct = [] (triangulateio & s) {
+							  s.pointlist = nullptr;                                               /* In / out */
+							  s.pointattributelist = nullptr;                                      /* In / out */
+							  s.pointmarkerlist = nullptr;                                          /* In / out */
+							  s.numberofpoints = 0;                                            /* In / out */
+							  s.numberofpointattributes = 0;                                   /* In / out */
+
+							  s.trianglelist = nullptr;                                             /* In / out */
+							  s.triangleattributelist = nullptr;                                   /* In / out */
+							  s.trianglearealist = nullptr;                                         /* In only */
+							  s.neighborlist = nullptr;                                             /* Out only */
+							  s.numberoftriangles = 0;                                         /* In / out */
+							  s.numberofcorners = 0;                                           /* In / out */
+							  s.numberoftriangleattributes = 0;                                /* In / out */
+
+							  s.segmentlist = nullptr;                                              /* In / out */
+							  s.segmentmarkerlist = nullptr;                                        /* In / out */
+							  s.numberofsegments = 0;                                          /* In / out */
+
+							  s.holelist = nullptr;                        /* In / pointer to array copied out */
+							  s.numberofholes = 0;                                      /* In / copied out */
+
+							  s.regionlist = nullptr;                      /* In / pointer to array copied out */
+							  s.numberofregions = 0;                                    /* In / copied out */
+
+							  s.edgelist = nullptr;                                                 /* Out only */
+							  s.edgemarkerlist = nullptr;            /* Not used with Voronoi diagram; out only */
+							  s.normlist = nullptr;                /* Used only with Voronoi diagram; out only */
+							  s.numberofedges = 0;                                             /* Out only */
+						};
+
+	auto freeStruct = [] (triangulateio & s) {
+							  free(s.pointlist);                                               /* In / out */
+							  free(s.pointattributelist);                                      /* In / out */
+							  free(s.pointmarkerlist);                                          /* In / out */
+
+							  free(s.trianglelist);                                             /* In / out */
+							  free(s.triangleattributelist);                                   /* In / out */
+							  free(s.trianglearealist);                                         /* In only */
+							  free(s.neighborlist);                                             /* Out only */
+
+							  free(s.segmentlist);                                              /* In / out */
+							  free(s.segmentmarkerlist);                                        /* In / out */
+
+							  free(s.holelist);                        /* In / pointer to array copied out */
+
+							  free(s.regionlist);                      /* In / pointer to array copied out */
+
+							  free(s.edgelist);                                                 /* Out only */
+							  free(s.edgemarkerlist);            /* Not used with Voronoi diagram; out only */
+							  free(s.normlist);                /* Used only with Voronoi diagram; out only */
+						};
+
+	struct triangulateio in, out;
+	initStruct(in); initStruct(out);
+
+	/* Define input points. */
+
+	in.numberofpoints = fNpoints;
+	in.pointlist = (REAL *) malloc(in.numberofpoints * 2 * sizeof(REAL));
+
+	for (uint i = 0; i < fNpoints; ++i) {
+		in.pointlist[2 * i] = fXN[i];
+		in.pointlist[2 * i + 1] = fYN[i];
+	}
+
+	triangulate("zQN", &in, &out, nullptr);
+
+	for(uint t = 0; t < out.numberoftriangles; ++t){
+		Triangle tri;
+
+		auto transform = [&] (const uint v) {
+			//each triangle as numberofcorners vertices ( = 3)
+			tri.idx[v] = out.trianglelist[t*out.numberofcorners + v];
+
+			//printf("triangle %u vertex %u: point %u/%i\n", t, v, tri.idx[v], out.numberofpoints);
+
+			//pointlist is [x0 y0 x1 y1 ...]
+			tri.x[v] = in.pointlist[tri.idx[v] * 2 + 0];
+
+			//printf("\t x: %f\n", tri.x[v]);
+
+			tri.y[v] = in.pointlist[tri.idx[v] * 2 + 1];
+
+			//printf("\t y: %f\n", tri.y[v]);
+		};
+
+		transform(0);
+		transform(1);
+		transform(2);
+
+		//see comment in header for CGAL fallback section
+		tri.invDenom = fabs(1 / ( (tri.y[1] - tri.y[2])*(tri.x[0] - tri.x[2]) + (tri.x[2] - tri.x[1])*(tri.y[0] - tri.y[2]) ));
+
+		fTriangles.push_back(tri);
+
+	}
+
+	freeStruct(in); freeStruct(out);
+}
+
+Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
+{
+   // Finds the Delaunay triangle that the point (xi,yi) sits in (if any) and
+   // calculate a z-value for it by linearly interpolating the z-values that
+   // make up that triangle.
+
+   // initialise the Delaunay algorithm if needed
+    FindAllTriangles();
+
+    //see comment in header for TriangleSupplement structure
+    auto bayCoords = [&] (const uint t) -> std::tuple<double, double, double> {
+    	double la = fabs(( (fTriangles[t].y[1] - fTriangles[t].y[2])*(xx - fTriangles[t].x[2])
+    					 + (fTriangles[t].x[2] - fTriangles[t].x[1])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom);
+    	double lb = fabs(( (fTriangles[t].y[2] - fTriangles[t].y[0])*(xx - fTriangles[t].x[2])
+    			         + (fTriangles[t].x[0] - fTriangles[t].x[2])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom);
+
+    	return std::make_tuple(la, lb, (1 - la - lb));
+    };
+
+    auto inTriangle = [] (const std::tuple<double, double, double> & coords) -> bool {
+    	return std::get<0>(coords) >= 0 && std::get<1>(coords) >= 0 && std::get<2>(coords) >= 0;
+    };
+
+    for(uint t = 0; t < fNdt; ++t){
+    	auto coords = bayCoords(t);
+
+    	if(inTriangle(coords)){
+    		//we found the triangle -> interpolate using the barycentric interpolation
+    		return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
+    		     + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
+    		     + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+
+    	}
+    }
+
+    //no triangle found return standard value
+   return fZout;
+}
+
+#endif

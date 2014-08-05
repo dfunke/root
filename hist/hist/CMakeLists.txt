@@ -14,6 +14,6 @@ include_directories(${CMAKE_SOURCE_DIR}/graf3d/g3d/inc)   # This is to avoid a c
 
 ROOT_GENERATE_DICTIONARY(G__${libname} *.h Math/*.h MODULE ${libname} LINKDEF LinkDef.h OPTIONS "-writeEmptyRootPCM")
 
-ROOT_LINKER_LIBRARY(${libname} *.cxx G__${libname}.cxx DEPENDENCIES Matrix MathCore ${CGAL_LIBRARY} ${GMP_LIBRARIES})
+ROOT_LINKER_LIBRARY(${libname} *.cxx *.c G__${libname}.cxx DEPENDENCIES Matrix MathCore ${CGAL_LIBRARY} ${GMP_LIBRARIES})
 ROOT_INSTALL_HEADERS()
 
