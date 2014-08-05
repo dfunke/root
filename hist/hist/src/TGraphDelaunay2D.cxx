@@ -152,6 +152,8 @@ void TGraphDelaunay2D::FindAllTriangles()
    fYNmax        = linear_transform(ymax, fOffsetY, fScaleFactorY); //yTransformer(ymax);
    fYNmin        = linear_transform(ymin, fOffsetY, fScaleFactorY); //yTransformer(ymin);
 
+   printf("Normalized space extends from (%f,%f) to (%f,%f)\n", fXNmin, fYNmin, fXNmax, fYNmax);
+
    _normalizePoints(); // call backend specific point normalization
 
    _findTriangles(); // call backend specific triangle finding
@@ -351,7 +353,7 @@ void TGraphDelaunay2D::_findTriangles() {
 	}
 
 	//sort triangles by their centroid
-	std::sort(fTriangles.begin(), fTriangles.end(),
+	/*std::sort(fTriangles.begin(), fTriangles.end(),
 			[] (const Triangle & t1, const Triangle & t2) -> bool{
 
 		//compute centroid of both triangles
@@ -372,7 +374,7 @@ void TGraphDelaunay2D::_findTriangles() {
 
 		return t1_cx < t2_cx || (t1_cx == t2_cx && t1_cy < t2_cy);
 
-	});
+	});*/
 
 	freeStruct(in); freeStruct(out);
 }
@@ -386,7 +388,7 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
    // initialise the Delaunay algorithm if needed
     FindAllTriangles();
 
-    //see comment in header for TriangleSupplement structure
+    //see comment in header for CGAL fallback section
     auto bayCoords = [&] (const uint t) -> std::tuple<double, double, double> {
     	double la = fabs(( (fTriangles[t].y[1] - fTriangles[t].y[2])*(xx - fTriangles[t].x[2])
     					 + (fTriangles[t].x[2] - fTriangles[t].x[1])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom);
@@ -399,7 +401,8 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     auto inTriangle = [] (const std::tuple<double, double, double> & coords) -> bool {
     	return std::get<0>(coords) >= 0 && std::get<1>(coords) >= 0 && std::get<2>(coords) >= 0;
     };
-
+    
+    /*
     uint t = fNdt / 2;
     uint step = t;
 
@@ -427,6 +430,19 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     	return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
     		 + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
     		 + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+    */
+
+    for(uint t = 0; t < fNdt; ++t){
+    	auto coords = bayCoords(t);
+
+    	if(inTriangle(coords)){
+    		//we found the triangle -> interpolate using the barycentric interpolation
+    		return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
+    		     + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
+    		     + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+
+    	}
+    }
 
     printf("Could not find a triangle for point (%f,%f)\n", xx, yy);
 
