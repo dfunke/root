@@ -350,6 +350,30 @@ void TGraphDelaunay2D::_findTriangles() {
 
 	}
 
+	//sort triangles by their centroid
+	std::sort(fTriangles.begin(), fTriangles.end(),
+			[] (const Triangle & t1, const Triangle & t2) -> bool{
+
+		//compute centroid of both triangles
+		double t1_cx = 0; double t1_cy = 0;
+		double t2_cx = 0; double t2_cy = 0;
+
+		for(uint i = 0; i < 3; ++i){
+			t1_cx += t1.x[i];
+			t1_cy += t1.y[i];
+
+			t2_cx += t2.x[i];
+			t2_cy += t2.y[i];
+		}
+
+		//we do not need the division, the ordering is unchanged
+		//t1_cx /= 3; t1_cy /= 3;
+		//t2_cx /= 3; t2_cy /= 3;
+
+		return t1_cx < t2_cx || (t1_cx == t2_cx && t1_cy < t2_cy);
+
+	});
+
 	freeStruct(in); freeStruct(out);
 }
 
@@ -376,17 +400,35 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     	return std::get<0>(coords) >= 0 && std::get<1>(coords) >= 0 && std::get<2>(coords) >= 0;
     };
 
-    for(uint t = 0; t < fNdt; ++t){
-    	auto coords = bayCoords(t);
+    uint t = fNdt / 2;
+    uint step = t;
 
-    	if(inTriangle(coords)){
-    		//we found the triangle -> interpolate using the barycentric interpolation
-    		return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
-    		     + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
-    		     + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+    auto coords = bayCoords(t);
 
-    	}
+    while(!inTriangle(coords) && step > 0){
+    	step /= 2;
+
+    	double t1_cx = 0; double t1_cy = 0;
+		for(uint i = 0; i < 3; ++i){
+			t1_cx += fTriangles[t].x[i];
+			t1_cy += fTriangles[t].y[i];
+		}
+
+		t1_cx /= 3; t1_cy /= 3;
+
+		if(xx < t1_cx || (xx == t1_cx && yy < t1_cy))
+			t -= step;
+		else
+			t += step;
     }
+
+    //we found the triangle -> interpolate using the barycentric interpolation
+    if(inTriangle(coords))
+    	return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
+    		 + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
+    		 + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+
+    printf("Could not find a triangle for point (%f,%f)\n", xx, yy);
 
     //no triangle found return standard value
    return fZout;
