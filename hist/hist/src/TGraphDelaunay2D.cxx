@@ -152,7 +152,7 @@ void TGraphDelaunay2D::FindAllTriangles()
    fYNmax        = linear_transform(ymax, fOffsetY, fScaleFactorY); //yTransformer(ymax);
    fYNmin        = linear_transform(ymin, fOffsetY, fScaleFactorY); //yTransformer(ymin);
 
-   printf("Normalized space extends from (%f,%f) to (%f,%f)\n", fXNmin, fYNmin, fXNmax, fYNmax);
+   //printf("Normalized space extends from (%f,%f) to (%f,%f)\n", fXNmin, fYNmin, fXNmax, fYNmax);
 
    _normalizePoints(); // call backend specific point normalization
 
@@ -240,16 +240,17 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
    return res;
 }
 
-#else
-
-// fallback to triangle library
-#include "triangle.h"
+#else // HAS_CGAL
 
 void TGraphDelaunay2D::_normalizePoints() {
 	for (Int_t n = 0; n < fNpoints; n++) {
 		fXN.push_back(linear_transform(fX[n], fOffsetX, fScaleFactorX));
 		fYN.push_back(linear_transform(fY[n], fOffsetY, fScaleFactorY));
 	}
+
+	//also initialize fXCellStep and FYCellStep
+	fXCellStep = fNCells / (fXNmax - fXNmin);
+	fYCellStep = fNCells / (fYNmax - fYNmin);
 }
 
 void TGraphDelaunay2D::_findTriangles() {
@@ -315,14 +316,15 @@ void TGraphDelaunay2D::_findTriangles() {
 	in.numberofpoints = fNpoints;
 	in.pointlist = (REAL *) malloc(in.numberofpoints * 2 * sizeof(REAL));
 
-	for (uint i = 0; i < fNpoints; ++i) {
+	for (Int_t i = 0; i < fNpoints; ++i) {
 		in.pointlist[2 * i] = fXN[i];
 		in.pointlist[2 * i + 1] = fYN[i];
 	}
 
-	triangulate("zQN", &in, &out, nullptr);
+	triangulate((char *) "zQN", &in, &out, nullptr);
 
-	for(uint t = 0; t < out.numberoftriangles; ++t){
+	fTriangles.resize(out.numberoftriangles);
+	for(int t = 0; t < out.numberoftriangles; ++t){
 		Triangle tri;
 
 		auto transform = [&] (const uint v) {
@@ -346,35 +348,26 @@ void TGraphDelaunay2D::_findTriangles() {
 		transform(2);
 
 		//see comment in header for CGAL fallback section
-		tri.invDenom = fabs(1 / ( (tri.y[1] - tri.y[2])*(tri.x[0] - tri.x[2]) + (tri.x[2] - tri.x[1])*(tri.y[0] - tri.y[2]) ));
+		tri.invDenom = 1 / ( (tri.y[1] - tri.y[2])*(tri.x[0] - tri.x[2]) + (tri.x[2] - tri.x[1])*(tri.y[0] - tri.y[2]) );
 
-		fTriangles.push_back(tri);
+		fTriangles[t] = tri;
+
+		auto bx = std::minmax({tri.x[0], tri.x[1], tri.x[2]});
+		auto by = std::minmax({tri.y[0], tri.y[1], tri.y[2]});
+
+		uint cellXmin = cellX(bx.first);
+		uint cellXmax = cellX(bx.second);
+
+		uint cellYmin = cellY(by.first);
+		uint cellYmax = cellY(by.second);
+
+		for(uint i = cellXmin; i <= cellXmax; ++i)
+			for(uint j = cellYmin; j <= cellYmax; ++j){
+				//printf("(%u,%u) = %u\n", i, j, cell(i,j));
+				fCells[cell(i,j)].insert(t);
+			}
 
 	}
-
-	//sort triangles by their centroid
-	/*std::sort(fTriangles.begin(), fTriangles.end(),
-			[] (const Triangle & t1, const Triangle & t2) -> bool{
-
-		//compute centroid of both triangles
-		double t1_cx = 0; double t1_cy = 0;
-		double t2_cx = 0; double t2_cy = 0;
-
-		for(uint i = 0; i < 3; ++i){
-			t1_cx += t1.x[i];
-			t1_cy += t1.y[i];
-
-			t2_cx += t2.x[i];
-			t2_cy += t2.y[i];
-		}
-
-		//we do not need the division, the ordering is unchanged
-		//t1_cx /= 3; t1_cy /= 3;
-		//t2_cx /= 3; t2_cy /= 3;
-
-		return t1_cx < t2_cx || (t1_cx == t2_cx && t1_cy < t2_cy);
-
-	});*/
 
 	freeStruct(in); freeStruct(out);
 }
@@ -390,10 +383,10 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
 
     //see comment in header for CGAL fallback section
     auto bayCoords = [&] (const uint t) -> std::tuple<double, double, double> {
-    	double la = fabs(( (fTriangles[t].y[1] - fTriangles[t].y[2])*(xx - fTriangles[t].x[2])
-    					 + (fTriangles[t].x[2] - fTriangles[t].x[1])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom);
-    	double lb = fabs(( (fTriangles[t].y[2] - fTriangles[t].y[0])*(xx - fTriangles[t].x[2])
-    			         + (fTriangles[t].x[0] - fTriangles[t].x[2])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom);
+    	double la = ( (fTriangles[t].y[1] - fTriangles[t].y[2])*(xx - fTriangles[t].x[2])
+    					 + (fTriangles[t].x[2] - fTriangles[t].x[1])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom;
+    	double lb = ( (fTriangles[t].y[2] - fTriangles[t].y[0])*(xx - fTriangles[t].x[2])
+    			         + (fTriangles[t].x[0] - fTriangles[t].x[2])*(yy - fTriangles[t].y[2]) ) * fTriangles[t].invDenom;
 
     	return std::make_tuple(la, lb, (1 - la - lb));
     };
@@ -402,37 +395,10 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     	return std::get<0>(coords) >= 0 && std::get<1>(coords) >= 0 && std::get<2>(coords) >= 0;
     };
     
-    /*
-    uint t = fNdt / 2;
-    uint step = t;
+	uint cX = cellX(xx);
+	uint cY = cellY(yy);
 
-    auto coords = bayCoords(t);
-
-    while(!inTriangle(coords) && step > 0){
-    	step /= 2;
-
-    	double t1_cx = 0; double t1_cy = 0;
-		for(uint i = 0; i < 3; ++i){
-			t1_cx += fTriangles[t].x[i];
-			t1_cy += fTriangles[t].y[i];
-		}
-
-		t1_cx /= 3; t1_cy /= 3;
-
-		if(xx < t1_cx || (xx == t1_cx && yy < t1_cy))
-			t -= step;
-		else
-			t += step;
-    }
-
-    //we found the triangle -> interpolate using the barycentric interpolation
-    if(inTriangle(coords))
-    	return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
-    		 + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
-    		 + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
-    */
-
-    for(uint t = 0; t < fNdt; ++t){
+    for(uint t : fCells[cell(cX, cY)]){
     	auto coords = bayCoords(t);
 
     	if(inTriangle(coords)){
@@ -444,10 +410,42 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     	}
     }
 
+    //debugging
+
+    /*for(uint t = 0; t < fNdt; ++t){
+    	auto coords = bayCoords(t);
+
+    	if(inTriangle(coords)){
+
+    		//brute force found a triangle -> grid not
+    		printf("Found triangle %u for (%f,%f) -> (%u,%u)\n", t, xx,yy, cX, cY);
+    		printf("Triangles in grid cell: ");
+    		for(uint x : fCells[cell(cX, cY)])
+    			printf("%u ", x);
+    		printf("\n");
+
+    		printf("Triangle %u is in cells: ", t);
+    		for(uint i = 0; i <= fNCells; ++i)
+    			for(uint j = 0; j <= fNCells; ++j)
+    				if(fCells[cell(i,j)].count(t))
+    					printf("(%u,%u) ", i, j);
+    		printf("\n");
+    		for(uint i = 0; i < 3; ++i)
+    			printf("\tpoint %u (%u): (%f,%f) -> (%u,%u)\n", i, fTriangles[t].idx[i], fTriangles[t].x[i], fTriangles[t].y[i], cellX(fTriangles[t].x[i]), cellY(fTriangles[t].y[i]));
+
+    		//we found the triangle -> interpolate using the barycentric interpolation
+    		return std::get<0>(coords) * fZ[fTriangles[t].idx[0]]
+    		     + std::get<1>(coords) * fZ[fTriangles[t].idx[1]]
+    		     + std::get<2>(coords) * fZ[fTriangles[t].idx[2]];
+
+    	}
+    }
+
     printf("Could not find a triangle for point (%f,%f)\n", xx, yy);
+    */
 
     //no triangle found return standard value
    return fZout;
 }
 
-#endif
+#endif //HAS_CGAL

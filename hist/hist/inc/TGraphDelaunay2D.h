@@ -12,9 +12,8 @@
 #ifndef ROOT_TGraphDelaunay2D
 #define ROOT_TGraphDelaunay2D
 
-
+//for testing purposes HAS_CGAL can be [un]defined here
 //#define HAS_CGAL
-
 
 //////////////////////////////////////////////////////////////////////////
 //                                                                      //
@@ -30,7 +29,21 @@
 #endif
 
 #include <map>
+#include <vector>
+#include <set>
 #include <functional>
+
+#ifdef HAS_CGAL
+   #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
+   #include <CGAL/Delaunay_triangulation_2.h>
+   #include <CGAL/Triangulation_vertex_base_with_info_2.h>
+   #include <CGAL/Interpolation_traits_2.h>
+   #include <CGAL/natural_neighbor_coordinates_2.h>
+   #include <CGAL/interpolation_functions.h>
+#else
+	// fallback to triangle library
+	#include "triangle.h"
+#endif
 
 class TGraph2D;
 class TView;
@@ -90,14 +103,6 @@ protected:
 
 #ifdef HAS_CGAL
 
-   //CGAL
-   #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
-   #include <CGAL/Delaunay_triangulation_2.h>
-   #include <CGAL/Triangulation_vertex_base_with_info_2.h>
-   #include <CGAL/Interpolation_traits_2.h>
-   #include <CGAL/natural_neighbor_coordinates_2.h>
-   #include <CGAL/interpolation_functions.h>
-
    //Functor class for accessing the function values/gradients
    	template< class PointWithInfoMap, typename ValueType >
    	struct Data_access : public std::unary_function< typename PointWithInfoMap::key_type,
@@ -131,7 +136,8 @@ protected:
 
    Delaunay fCGALdelaunay; //! CGAL delaunay triangulation object
    PointWithInfoMap fNormalizedPoints; //! Normalized function values
-#else
+
+#else // HAS_CGAL
    //fallback to triangle library
 
    /* Using barycentric coordinates for inTriangle test and interpolation
@@ -174,7 +180,29 @@ protected:
    std::vector<Double_t> fXN; //! normalized X
    std::vector<Double_t> fYN; //! normalized Y
 
-#endif
+   /* To speed up localisation of points a grid is layed over normalized space
+    *
+    * A reference to triangle ABC is added to _all_ grid cells that include ABC's bounding box
+    */
+
+   static const UInt_t fNCells = 25; //! number of cells to divide the normalized space
+   Double_t fXCellStep; //! inverse denominator to calculate X cell = fNCells / (fXNmax - fXNmin)
+   Double_t fYCellStep; //! inverse denominator to calculate X cell = fNCells / (fYNmax - fYNmin)
+   std::set<UInt_t> fCells[(fNCells+1)*(fNCells+1)]; //! grid cells with containing triangles
+
+   inline uint cell(uint x, uint y) const {
+	   return x*(fNCells+1) + y;
+   }
+
+   inline uint cellX(double x) const {
+	   return (x - fXNmin) * fXCellStep;
+   }
+
+   inline uint cellY(double y) const {
+	   return (y - fYNmin) * fYCellStep;
+   }
+
+#endif //HAS_CGAL
 
 public:
 
