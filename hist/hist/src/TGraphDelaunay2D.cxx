@@ -395,8 +395,11 @@ Double_t TGraphDelaunay2D::_interpolateNormalized(Double_t xx, Double_t yy)
     	return std::get<0>(coords) >= 0 && std::get<1>(coords) >= 0 && std::get<2>(coords) >= 0;
     };
     
-	uint cX = cellX(xx);
-	uint cY = cellY(yy);
+	int cX = cellX(xx);
+	int cY = cellY(yy);
+
+	if(cX < 0 || cX > fNCells || cY < 0 || cY > fNCells)
+		return fZout; //TODO some more fancy interpolation here
 
     for(uint t : fCells[cell(cX, cY)]){
     	auto coords = bayCoords(t);

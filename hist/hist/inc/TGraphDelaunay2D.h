@@ -194,11 +194,11 @@ protected:
 	   return x*(fNCells+1) + y;
    }
 
-   inline uint cellX(double x) const {
+   inline int cellX(double x) const {
 	   return (x - fXNmin) * fXCellStep;
    }
 
-   inline uint cellY(double y) const {
+   inline int cellY(double y) const {
 	   return (y - fYNmin) * fYCellStep;
    }
 
