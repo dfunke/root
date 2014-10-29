@@ -34,12 +34,20 @@
 #include <functional>
 
 #ifdef HAS_CGAL
+	/* CGAL uses the name PTR as member name in its Handle class
+	 * but its a macro defined in mmalloc.h of ROOT
+	 * Safe it, disable it and then re-enable it later on*/
+	#pragma push_macro("PTR")
+	#undef PTR
+
    #include <CGAL/Exact_predicates_inexact_constructions_kernel.h>
    #include <CGAL/Delaunay_triangulation_2.h>
    #include <CGAL/Triangulation_vertex_base_with_info_2.h>
    #include <CGAL/Interpolation_traits_2.h>
    #include <CGAL/natural_neighbor_coordinates_2.h>
    #include <CGAL/interpolation_functions.h>
+
+	#pragma pop_macro("PTR")
 #else
 	// fallback to triangle library
 	#include "triangle.h"
