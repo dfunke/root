@@ -287,25 +287,25 @@ void TGraphDelaunay2D::_findTriangles() {
 						};
 
 	auto freeStruct = [] (triangulateio & s) {
-							  free(s.pointlist);                                               /* In / out */
-							  free(s.pointattributelist);                                      /* In / out */
-							  free(s.pointmarkerlist);                                          /* In / out */
+							  if(s.pointlist != nullptr) free(s.pointlist);                                               /* In / out */
+							  if(s.pointattributelist != nullptr) free(s.pointattributelist);                                      /* In / out */
+							  if(s.pointmarkerlist != nullptr) free(s.pointmarkerlist);                                          /* In / out */
 
-							  free(s.trianglelist);                                             /* In / out */
-							  free(s.triangleattributelist);                                   /* In / out */
-							  free(s.trianglearealist);                                         /* In only */
-							  free(s.neighborlist);                                             /* Out only */
+							  if(s.trianglelist != nullptr) free(s.trianglelist);                                             /* In / out */
+							  if(s.triangleattributelist != nullptr) free(s.triangleattributelist);                                   /* In / out */
+							  if(s.trianglearealist != nullptr) free(s.trianglearealist);                                         /* In only */
+							  if(s.neighborlist != nullptr) free(s.neighborlist);                                             /* Out only */
 
-							  free(s.segmentlist);                                              /* In / out */
-							  free(s.segmentmarkerlist);                                        /* In / out */
+							  if(s.segmentlist != nullptr) free(s.segmentlist);                                              /* In / out */
+							  if(s.segmentmarkerlist != nullptr) free(s.segmentmarkerlist);                                        /* In / out */
 
-							  free(s.holelist);                        /* In / pointer to array copied out */
+							  if(s.holelist != nullptr) free(s.holelist);                        /* In / pointer to array copied out */
 
-							  free(s.regionlist);                      /* In / pointer to array copied out */
+							  if(s.regionlist != nullptr) free(s.regionlist);                      /* In / pointer to array copied out */
 
-							  free(s.edgelist);                                                 /* Out only */
-							  free(s.edgemarkerlist);            /* Not used with Voronoi diagram; out only */
-							  free(s.normlist);                /* Used only with Voronoi diagram; out only */
+							  if(s.edgelist != nullptr) free(s.edgelist);                                                 /* Out only */
+							  if(s.edgemarkerlist != nullptr) free(s.edgemarkerlist);            /* Not used with Voronoi diagram; out only */
+							  if(s.normlist != nullptr) free(s.normlist);                /* Used only with Voronoi diagram; out only */
 						};
 
 	struct triangulateio in, out;
