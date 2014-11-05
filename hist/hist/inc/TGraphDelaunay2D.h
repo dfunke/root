@@ -15,6 +15,9 @@
 //for testing purposes HAS_CGAL can be [un]defined here
 //#define HAS_CGAL
 
+//for testing purposes THREAD_SAFE can [un]defined here
+//#define THREAD_SAFE
+
 //////////////////////////////////////////////////////////////////////////
 //                                                                      //
 // TGraphDelaunay2D                                                     //
@@ -51,6 +54,10 @@
 #else
 	// fallback to triangle library
 	#include "triangle.h"
+#endif
+
+#ifdef THREAD_SAFE
+	#include<atomic> //atomic operations for thread safety
 #endif
 
 class TGraph2D;
@@ -103,7 +110,14 @@ protected:
 
    Double_t    fZout;        //!Histogram bin height for points lying outside the convex hull
 
-   Bool_t      fInit;        //!True if CreateTrianglesDataStructure() and FindHull() have been performed
+#ifdef THREAD_SAFE
+
+   enum class Initialization : char {UNINITIALIZED, INITIALIZING, INITIALIZED};
+   std::atomic<Initialization> fInit; //!Indicate initialization state
+
+#else
+   Bool_t      fInit;        //!True if FindAllTriangels() has been performed
+#endif
 
    TGraph2D   *fGraph2D;     //!2D graph containing the user data
 

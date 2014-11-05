@@ -64,7 +64,13 @@ TGraphDelaunay2D::TGraphDelaunay2D()
    fScaleFactorY = 0;
    fZout         = 0.;
    fNdt          = 0;
+
+#ifdef THREAD_SAFE
+   fInit		 = Initialization::UNINITIALIZED;
+#else
    fInit         = kFALSE;
+#endif
+
    fXNmin        = 0.;
    fXNmax        = 0.;
    fYNmin        = 0.;
@@ -94,7 +100,13 @@ TGraphDelaunay2D::TGraphDelaunay2D(TGraph2D *g)
    fScaleFactorY = 0;
    fZout         = 0.;
    fNdt          = 0;
+
+#ifdef THREAD_SAFE
+   fInit		 = Initialization::UNINITIALIZED;
+#else
    fInit         = kFALSE;
+#endif
+
    fXNmin        = 0.;
    fXNmax        = 0.;
    fYNmin        = 0.;
@@ -134,41 +146,62 @@ Double_t TGraphDelaunay2D::Eval(Double_t x, Double_t y)
 void TGraphDelaunay2D::FindAllTriangles()
 {
 
+#ifdef THREAD_SAFE
+	//treat the common case first
+	if(fInit.load(std::memory_order::memory_order_relaxed) == Initialization::INITIALIZED)
+		return;
+
+	Initialization cState = Initialization::UNINITIALIZED;
+	if(fInit.compare_exchange_strong(cState, Initialization::INITIALIZING,
+			std::memory_order::memory_order_release, std::memory_order::memory_order_relaxed))
+	{
+		// the value of fInit was indeed UNINIT, we replaced it atomically with initializing
+		// performing the initialzing now
+#else
    if (fInit) return; else fInit = kTRUE;
+#endif
 
-   // Function used internally only. It creates the data structures needed to
-   // compute the Delaunay triangles.
+	   // Function used internally only. It creates the data structures needed to
+	   // compute the Delaunay triangles.
 
-   // Offset fX and fY so they average zero, and scale so the average
-   // of the X and Y ranges is one. The normalized version of fX and fY used
-   // in Interpolate.
-   Double_t xmax = fGraph2D->GetXmax();
-   Double_t ymax = fGraph2D->GetYmax();
-   Double_t xmin = fGraph2D->GetXmin();
-   Double_t ymin = fGraph2D->GetYmin();
+	   // Offset fX and fY so they average zero, and scale so the average
+	   // of the X and Y ranges is one. The normalized version of fX and fY used
+	   // in Interpolate.
+	   Double_t xmax = fGraph2D->GetXmax();
+	   Double_t ymax = fGraph2D->GetYmax();
+	   Double_t xmin = fGraph2D->GetXmin();
+	   Double_t ymin = fGraph2D->GetYmin();
 
-   fOffsetX      = -(xmax+xmin)/2.;
-   fOffsetY      = -(ymax+ymin)/2.;
+	   fOffsetX      = -(xmax+xmin)/2.;
+	   fOffsetY      = -(ymax+ymin)/2.;
 
-   fScaleFactorX = 1./(xmax-xmin);
-   fScaleFactorY = 1./(ymax-ymin);
+	   fScaleFactorX = 1./(xmax-xmin);
+	   fScaleFactorY = 1./(ymax-ymin);
 
-   //xTransformer = std::bind(linear_transform, std::placeholders::_1, Xoffset, XScaleFactor);
-   //yTransformer = std::bind(linear_transform, std::placeholders::_1, Yoffset, YScaleFactor);
+	   //xTransformer = std::bind(linear_transform, std::placeholders::_1, Xoffset, XScaleFactor);
+	   //yTransformer = std::bind(linear_transform, std::placeholders::_1, Yoffset, YScaleFactor);
 
-   fXNmax        = linear_transform(xmax, fOffsetX, fScaleFactorX); //xTransformer(xmax);
-   fXNmin        = linear_transform(xmin, fOffsetX, fScaleFactorX); //xTransformer(xmin);
+	   fXNmax        = linear_transform(xmax, fOffsetX, fScaleFactorX); //xTransformer(xmax);
+	   fXNmin        = linear_transform(xmin, fOffsetX, fScaleFactorX); //xTransformer(xmin);
 
-   fYNmax        = linear_transform(ymax, fOffsetY, fScaleFactorY); //yTransformer(ymax);
-   fYNmin        = linear_transform(ymin, fOffsetY, fScaleFactorY); //yTransformer(ymin);
+	   fYNmax        = linear_transform(ymax, fOffsetY, fScaleFactorY); //yTransformer(ymax);
+	   fYNmin        = linear_transform(ymin, fOffsetY, fScaleFactorY); //yTransformer(ymin);
 
-   //printf("Normalized space extends from (%f,%f) to (%f,%f)\n", fXNmin, fYNmin, fXNmax, fYNmax);
+	   //printf("Normalized space extends from (%f,%f) to (%f,%f)\n", fXNmin, fYNmin, fXNmax, fYNmax);
 
-   _normalizePoints(); // call backend specific point normalization
+	   _normalizePoints(); // call backend specific point normalization
 
-   _findTriangles(); // call backend specific triangle finding
+	   _findTriangles(); // call backend specific triangle finding
 
-   fNdt = fTriangles.size();
+	   fNdt = fTriangles.size();
+
+#ifdef THREAD_SAFE
+	   fInit = Initialization::INITIALIZED;
+	} else while(cState != Initialization::INITIALIZED) {
+		//the value of fInit was NOT UNINIT, so we have to spin until we reach INITIALEZED
+		cState = fInit.load(std::memory_order::memory_order_relaxed);
+	}
+#endif
 
 }
 
