@@ -69,6 +69,11 @@ TGraphDelaunay2D::TGraphDelaunay2D()
    fXNmax        = 0.;
    fYNmin        = 0.;
    fYNmax        = 0.;
+
+#ifndef HAS_CGAL
+   fXCellStep    = 0.;
+   fYCellStep    = 0.;
+#endif
 }
 
 
@@ -94,6 +99,11 @@ TGraphDelaunay2D::TGraphDelaunay2D(TGraph2D *g)
    fXNmax        = 0.;
    fYNmin        = 0.;
    fYNmax        = 0.;
+
+#ifndef HAS_CGAL
+   fXCellStep    = 0.;
+   fYCellStep    = 0.;
+#endif
 }
 
 //______________________________________________________________________________
