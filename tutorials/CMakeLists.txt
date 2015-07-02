@@ -12,9 +12,8 @@ if(DEFINED ROOT_SOURCE_DIR)  # Testing using the binary tree
                    ROOTSYS=${CMAKE_BINARY_DIR}
                    PYTHONPATH=${CMAKE_BINARY_DIR}/lib:$ENV{PYTHONPATH})
 else()                       # testing using an installation
-  if(DEFINED ROOT_USE_FILE)
-    include(${ROOT_USE_FILE})
-  else()  #---If ROOT was built with the classic configure/make---
+  include(${ROOT_USE_FILE})
+  if(DEFINED ROOT_CONFIG_EXECUTABLE) #---If ROOT was built with the classic configure/make---
     set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} ${CMAKE_CURRENT_SOURCE_DIR}/../cmake/modules)
     include(RootNewMacros)
     set(ROOT_root_CMD root.exe)
@@ -55,7 +54,7 @@ if(NOT ROOT_minuit2_FOUND)
                    fit/minuit2FitBench2D.C fit/minuit2FitBench.C
                    fit/minuit2FitBench.C fit/minuit2GausFit.C
                    fit/minuit2GausFit.C fit/NumericalMinimization.C
-                   fit/combinedFit.C)
+                   fit/combinedFit.C fit/TestBinomial.C)
 endif()
 
 if(NOT ROOT_roofit_FOUND)
@@ -71,6 +70,11 @@ endif()
 if(NOT ROOT_xml_FOUND)
   set(xml_veto  xml/*.C
                 histfactory/*.C)   # histfactory requires xml
+endif()
+
+# variables identifying the package must have the package name  in lower case (it corresponds to the CMake option name)
+if(NOT ROOT_r_FOUND)
+  set(r_veto  r/*.C)
 endif()
 
 if(WIN32)
@@ -99,7 +103,8 @@ if(NOT ROOT_fftw3_FOUND)
                  roofit/rf210_angularconv.C
                  roofit/rf211_paramconv.C
                  roofit/rf512_wsfactory_oper.C
-                 fft/FFT.C)
+                 fft/FFT.C
+                 fit/fitConvolution.C)
 endif()
 
 if(NOT ROOT_opengl_FOUND)
@@ -124,6 +129,9 @@ set(gui_veto fit/fitpanel_playback.C
              roostats/ModelInspector.C
              tree/tvdemo.C
              eve/*.C)
+
+#---These do not need to run for TMVA
+set (tmva_veto tmva/createData.C)
 
 #---These ones are disabled !!! ------------------------------------
 set(extra_veto
@@ -150,7 +158,8 @@ set(extra_veto
   tree/copytree.C
   tree/h1analysis*.C # these are not a tutorial but classes used in run_h1analysis.C
   tree/h1chain.C
-  http/*.C)
+  http/*.C
+  r/rootlogon.C)
 
 set(all_veto hsimple.C
              ${extra_veto}
@@ -160,10 +169,12 @@ set(all_veto hsimple.C
              ${unuran_veto}
              ${xml_veto}
              ${fitsio_veto}
+             ${tmva_veto}
              ${mathmore_veto}
              ${fftw3_veto}
              ${opengl_veto}
              ${gviz_veto}
+             ${r_veto}
              ${histfactory_veto})
 
 file(GLOB_RECURSE tutorials RELATIVE ${CMAKE_CURRENT_SOURCE_DIR} *.C)
@@ -198,7 +209,8 @@ set(returncode_1 fit/fit2a.C fit/graph2dfit.C
                  hist/hlabels1.C
                  hist/hlabels2.C
                  tree/h1analysis.C
-                 math/chi2test.C )
+                 math/chi2test.C
+                 r/SimpleFitting.C)
 #---Dependencies------------------------------------------------------
 set(math-testUnfold5d-depends tutorial-math-testUnfold5c)
 set(math-testUnfold5c-depends tutorial-math-testUnfold5b)
@@ -214,9 +226,12 @@ set(tree-cernstaff-depends  tutorial-tree-cernbuild)
 set(hist-hbars-depends  tutorial-tree-cernbuild)
 set(benchmarks-depends tutorial-hsimple
                        tutorial-fit-fit1
+                       tutorial-fit-myfit 
                        tutorial-hist-h1draw
                        tutorial-geom-na49view
-                       tutorial-tree-ntuple1)
+                       tutorial-tree-ntuple1
+                       tutorial-io-hadd
+                       tutorial-io-loopdir)
 
 #--many roostats tutorials depending on having creating the file first with histfactory
 foreach(tname  ModelInspector OneSidedFrequentistUpperLimitWithBands StandardBayesianMCMCDemo StandardBayesianNumericalDemo
@@ -225,6 +240,16 @@ foreach(tname  ModelInspector OneSidedFrequentistUpperLimitWithBands StandardBay
                OneSidedFrequentistUpperLimitWithBands TwoSidedFrequentistUpperLimitWithBands)
   set(roostats-${tname}-depends tutorial-roostats-StandardProfileLikelihoodDemo)
 endforeach()
+
+#--dependency for TMVA tutorials
+set (tmva-TMVAClassificationApplication-depends tutorial-tmva-TMVAClassification)
+set (tmva-TMVAClassificationCategory-depends tutorial-tmva-TMVAClassification)
+set (tmva-TMVAClassificationCategoryApplication-depends tutorial-tmva-TMVAClassificationCategory)
+set (tmva-TMVAMulticlass-depends tutorial-tmva-TMVAMultipleBackgroundExample)
+set (tmva-TMVAMulticlassApplication-depends tutorial-tmva-TMVAMulticlass)
+set (tmva-TMVAMulticlassApplication-depends tutorial-tmva-TMVAMulticlass)
+set (tmva-TMVARegressionApplication-depends tutorial-tmva-TMVARegression)
+
 
 #---Loop over all tutorials and define the corresponding test---------
 
@@ -246,7 +271,7 @@ foreach(t ${tutorials})
   string(REPLACE "/" "-" tname ${tname})
   ROOT_ADD_TEST(tutorial-${tname}
                 COMMAND ${ROOT_root_CMD} -b -l -q ${CMAKE_CURRENT_SOURCE_DIR}/${t}${${tname}-aclic}
-                PASSRC ${rc} FAILREGEX "Error in" "error:" "segmentation violation"
+                PASSRC ${rc} FAILREGEX "Error in" "error:" "segmentation violation" "FROM HESSE     STATUS=FAILED"
                 LABELS tutorial
                 DEPENDS tutorial-hsimple ${${tname}-depends}
                 ENVIRONMENT ${ROOT_environ})

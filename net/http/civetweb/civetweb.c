@@ -693,6 +693,17 @@ static int is_file_opened(const struct file *filep)
     return filep->membuf != NULL || filep->fp != NULL;
 }
 
+const struct mg_context *mg_get_context(const struct mg_connection *conn)
+{
+    return conn == NULL ? NULL : conn->ctx;
+}
+
+void *mg_get_user_data(const struct mg_context *ctx)
+{
+    return ctx == NULL ? NULL : ctx->user_data;
+}
+
+
 static int mg_fopen(struct mg_connection *conn, const char *path,
                     const char *mode, struct file *filep)
 {
@@ -3438,6 +3449,7 @@ static void parse_http_headers(char **buf, struct mg_request_info *ri)
 {
     int i;
 
+    ri->num_headers = 0;
     for (i = 0; i < (int) ARRAY_SIZE(ri->http_headers); i++) {
         ri->http_headers[i].name = skip_quoted(buf, ":", " ", 0);
         ri->http_headers[i].value = skip(buf, "\r\n");

@@ -5,7 +5,6 @@ from os import path
 from ROOT import TCanvas, TFile, TPaveText
 from ROOT import gROOT, gBenchmark
 
-gROOT.Reset()
 c1 = TCanvas( 'c1', 'The Fit Canvas', 200, 10, 700, 500 )
 c1.SetGridx()
 c1.SetGridy()
@@ -18,7 +17,7 @@ gBenchmark.Start( 'fit1' )
 # We connect the ROOT file generated in a previous tutorial
 # (see begin_html <a href="fillrandom.C.html">Filling histograms with random numbers from a function</a>) end_html
 #
-fill = TFile( 'fillrandom.root' )
+fill = TFile( 'py-fillrandom.root' )
 
 #
 # The function "ls()" lists the directory contents of this file

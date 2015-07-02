@@ -43,7 +43,7 @@ add_cling_library(clingInterpreter
   ValueExtractionSynthesizer.cpp
   RuntimeException.cpp
   Transaction.cpp
-  TransactionTransformer.cpp
+  ASTTransformer.cpp
   TransactionUnloader.cpp
   Value.cpp
   ValuePrinter.cpp
@@ -58,7 +58,7 @@ if(NOT WIN32)
 set_source_files_properties(RuntimeException.cpp COMPILE_FLAGS -fexceptions)
 endif()
 
-set_source_files_properties(Interpreter.cpp COMPILE_FLAGS -DCLING_VERSION=\\\"${CLING_VERSION}\\\")
+set_source_files_properties(Interpreter.cpp COMPILE_FLAGS -DCLING_VERSION=${CLING_VERSION})
 
 #set_source_files_properties(RuntimeException.cpp COMPILE_FLAGS " /EHsc ")
 # the line above doesn't work, and it gives the following warnings:

@@ -15,7 +15,7 @@
 #include "TIsAProxy.h"
 
 #include <map>
-
+#include <type_traits>
 
 //////////////////////////////////////////////////////////////////////////
 //                                                                      //
@@ -32,118 +32,151 @@ namespace {
       //    typeid( * (DynamicType*) void_ptr );
       virtual ~DynamicType() {}
    };
+
+   typedef std::map<const void*, TClass*> ClassMap_t; // Internal type map
+   inline ClassMap_t *GetMap(const void* p)
+   {
+      return (ClassMap_t*)p;
+   }
+
+   inline ClassMap_t::value_type* ToPair(void*p)
+   {
+      return (ClassMap_t::value_type*)p;
+   }
 }
 
-typedef std::map<Long_t, TClass*> ClassMap_t; // Internal type map
-inline ClassMap_t *GetMap(void* p)
-{
-   return (ClassMap_t*)p;
-}
+////////////////////////////////////////////////////////////////////////////////
+/// Standard initializing constructor
 
-//______________________________________________________________________________
-TIsAProxy::TIsAProxy(const std::type_info& typ, void* ctxt)
-   : fType(&typ), fLastType(&typ), fClass(0), fLastClass(0),
-     fVirtual(false), fContext(ctxt), fInit(false)
+TIsAProxy::TIsAProxy(const std::type_info& typ)
+   : fType(&typ), fClass(nullptr), fLast(nullptr),
+     fSubTypesReaders(0), fSubTypesWriteLockTaken(kFALSE),
+     fVirtual(kFALSE), fInit(kFALSE)
 {
-   // Standard initializing constructor
+   static_assert(sizeof(ClassMap_t)<=sizeof(fSubTypes), "ClassMap size is to large for array");
 
    ::new(fSubTypes) ClassMap_t();
-   if ( sizeof(ClassMap_t) > sizeof(fSubTypes) ) {
-      Fatal("TIsAProxy::TIsAProxy",
-         "Classmap size is badly adjusted: it needs %u instead of %u bytes.",
-         (UInt_t)sizeof(ClassMap_t), (UInt_t)sizeof(fSubTypes));
-   }
 }
 
-//______________________________________________________________________________
-TIsAProxy::TIsAProxy(const TIsAProxy& iap) :
-  TVirtualIsAProxy(iap),
-  fType(iap.fType),
-  fLastType(iap.fLastType),
-  fClass(iap.fClass),
-  fLastClass(iap.fLastClass),
-  fVirtual(iap.fVirtual),
-  fContext(iap.fContext),
-  fInit(iap.fInit)
-{
-   //copy constructor
-   for(Int_t i=0; i<72; i++) fSubTypes[i]=iap.fSubTypes[i];
-}
+////////////////////////////////////////////////////////////////////////////////
+/// Standard destructor
 
-//______________________________________________________________________________
-TIsAProxy& TIsAProxy::operator=(const TIsAProxy& iap)
-{
-   //assignement operator
-   if(this!=&iap) {
-      TVirtualIsAProxy::operator=(iap);
-      fType=iap.fType;
-      fLastType=iap.fLastType;
-      fClass=iap.fClass;
-      fLastClass=iap.fLastClass;
-      for(Int_t i=0; i<72; i++) fSubTypes[i]=iap.fSubTypes[i];
-      fVirtual=iap.fVirtual;
-      fContext=iap.fContext;
-      fInit=iap.fInit;
-   }
-   return *this;
-}
-
-//______________________________________________________________________________
 TIsAProxy::~TIsAProxy()
 {
-   // Standard destructor
-
    ClassMap_t* m = GetMap(fSubTypes);
    m->clear();
    m->~ClassMap_t();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Set class pointer
+///   This method is not thread safe
+
 void TIsAProxy::SetClass(TClass *cl)
 {
-   // Set class pointer
    GetMap(fSubTypes)->clear();
-   fClass = fLastClass = cl;
+   fClass = cl;
+   fLast = nullptr;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// IsA callback
+
 TClass* TIsAProxy::operator()(const void *obj)
 {
-   // IsA callback
-
    if ( !fInit )  {
+      if ( !fClass.load() && fType ) {
+         auto cls = TClass::GetClass(*fType);
+         TClass* expected = nullptr;
+         fClass.compare_exchange_strong(expected,cls);
+      }
+      if ( !fClass.load() ) return nullptr;
+      fVirtual = (*fClass).ClassProperty() & kClassHasVirtual;
       fInit = kTRUE;
-      if ( !fClass && fType ) fClass = TClass::GetClass(*fType);
-      if ( !fClass) return 0;
-      fVirtual = fClass->ClassProperty() & kClassHasVirtual;
    }
    if ( !obj || !fVirtual )  {
-      return fClass;
-   } else  {
-      // Avoid the case that the first word is a virtual_base_offset_table instead of
-      // a virtual_function_table
-      Long_t offset = **(Long_t**)obj;
-      if ( offset == 0 ) return fClass;
-
-      DynamicType* ptr = (DynamicType*)obj;
-      const std::type_info* typ = &typeid(*ptr);
-
-      if ( typ == fType )  {
-         return fClass;
-      }
-      else if ( typ == fLastType )  {
-         return fLastClass;
-      }
-      // Check if type is already in sub-class cache
-      else if ( 0 != (fLastClass=(*GetMap(fSubTypes))[long(typ)]) )  {
-         fLastType = typ;
-      }
-      // Last resort: lookup root class
-      else   {
-         fLastClass = TClass::GetClass(*typ);
-         fLastType = typ;
-         (*GetMap(fSubTypes))[long(fLastType)] = fLastClass;
-      }
+      return fClass.load();
    }
-   return fLastClass;
+   // Avoid the case that the first word is a virtual_base_offset_table instead of
+   // a virtual_function_table
+   Long_t offset = **(Long_t**)obj;
+   if ( offset == 0 ) {
+      return fClass.load();
+   }
+
+   DynamicType* ptr = (DynamicType*)obj;
+   const std::type_info* typ = &typeid(*ptr);
+
+   if ( typ == fType )  {
+     return fClass.load();
+   }
+   auto last = ToPair(fLast.load());
+   if ( last && typ == last->first )  {
+      return last->second;
+   }
+   // Check if type is already in sub-class cache
+   last = ToPair(FindSubType(typ));
+   if ( last == nullptr || last->second == nullptr )  {
+      // Last resort: lookup root class
+      auto cls = TClass::GetClass(*typ);
+      last = ToPair(CacheSubType(typ,cls));
+   }
+   fLast.store(last);
+
+   return last == nullptr? nullptr: last->second;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// See if we have already cached the TClass that correspond to this type_info.
+
+inline void* TIsAProxy::FindSubType(const type_info* type) const
+{
+   bool needToWait = kTRUE;
+   do {
+     ++fSubTypesReaders;
+
+     //See if there is a writer, if there is we need to release
+     // our reader count so that the writer can proceed
+     if(fSubTypesWriteLockTaken) {
+       --fSubTypesReaders;
+       while(fSubTypesWriteLockTaken) {}
+     } else {
+       needToWait = kFALSE;
+     }
+   } while(needToWait);
+
+   void* returnValue = nullptr;
+   auto const map = GetMap(fSubTypes);
+
+   auto found = map->find(type);
+   if(found != map->end()) {
+      returnValue = &(*found);
+   }
+   --fSubTypesReaders;
+   return returnValue;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Record the TClass found for a type_info, so that we can retrieved it faster.
+
+void* TIsAProxy::CacheSubType(const type_info* type, TClass* cls)
+{
+   //See if another thread has the write lock, wait if it does
+   Bool_t expected = kFALSE;
+   while(! fSubTypesWriteLockTaken.compare_exchange_strong(expected,kTRUE) ) {
+      expected = kFALSE;
+   };
+
+   //See if there are any readers
+   while(fSubTypesReaders > 0);
+
+   auto map = GetMap(fSubTypes);
+   auto ret = map->emplace(type,cls);
+   if (!ret.second) {
+      // type is already in the map, let's update it.
+      (*ret.first).second = cls;
+   }
+
+   fSubTypesWriteLockTaken = kFALSE;
+   return &(*(ret.first));
 }

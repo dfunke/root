@@ -111,17 +111,19 @@ namespace {
       return PyROOT_PyUnicode_FromString( pymeth->GetName().c_str() );
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
    PyObject* mp_module( MethodProxy* /* pymeth */, void* )
    {
       Py_INCREF( PyStrings::gROOTns );
       return PyStrings::gROOTns;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Build python document string ('__doc__') from all C++-side overloads.
+
    PyObject* mp_doc( MethodProxy* pymeth, void* )
    {
-   // Build python document string ('__doc__') from all C++-side overloads.
       MethodProxy::Methods_t& methods = pymeth->fMethodInfo->fMethods;
 
    // collect doc strings
@@ -143,10 +145,11 @@ namespace {
       return doc;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Create a new method proxy to be returned.
+
    PyObject* mp_meth_func( MethodProxy* pymeth, void* )
    {
-   // Create a new method proxy to be returned.
       MethodProxy* newPyMeth = (MethodProxy*)MethodProxy_Type.tp_alloc( &MethodProxy_Type, 0 );
 
    // method info is shared, as it contains the collected overload knowledge
@@ -160,11 +163,12 @@ namespace {
       return (PyObject*)newPyMeth;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return the bound self, if any; in case of pseudo-function role, pretend
+/// that the data member im_self does not exist.
+
    PyObject* mp_meth_self( MethodProxy* pymeth, void* )
    {
-   // Return the bound self, if any; in case of pseudo-function role, pretend
-   // that the data member im_self does not exist.
       if ( IsPseudoFunc( pymeth ) ) {
          PyErr_Format( PyExc_AttributeError,
             "function %s has no attribute \'im_self\'", pymeth->fMethodInfo->fName.c_str() );
@@ -178,11 +182,12 @@ namespace {
       return Py_None;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return scoping class; in case of pseudo-function role, pretend that there
+/// is no encompassing class (i.e. global scope).
+
    PyObject* mp_meth_class( MethodProxy* pymeth, void* )
    {
-   // Return scoping class; in case of pseudo-function role, pretend that there
-   // is no encompassing class (i.e. global scope).
       if ( ! IsPseudoFunc( pymeth ) ) {
          PyObject* pyclass = pymeth->fMethodInfo->fMethods[0]->GetScopeProxy();
          if ( ! pyclass )
@@ -195,26 +200,34 @@ namespace {
       return Py_None;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Stub only, to fill out the python function interface.
+
    PyObject* mp_func_closure( MethodProxy* /* pymeth */, void* )
    {
-   // Stub only, to fill out the python function interface.
       Py_INCREF( Py_None );
       return Py_None;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Code details are used in module inspect to fill out interactive help()
+
    PyObject* mp_func_code( MethodProxy* pymeth, void* )
    {
-   // Code details are used in module inspect to fill out interactive help()
 #if PY_VERSION_HEX < 0x03000000
       MethodProxy::Methods_t& methods = pymeth->fMethodInfo->fMethods;
 
    // collect arguments only if there is just 1 overload, otherwise put in a
    // fake *args (see below for co_varnames)
-      int co_argcount = (methods.size() == 1 ? methods[0]->GetMaxArgs() : 1) + 1 /* for 'self' */;
+      PyObject* co_varnames = methods.size() == 1 ? methods[0]->GetCoVarNames() : NULL;
+      if ( !co_varnames ) {
+      // TODO: static methods need no 'self' (but is harmless otherwise)
+         co_varnames = PyTuple_New( 1 /* self */ + 1 /* fake */ );
+         PyTuple_SET_ITEM( co_varnames, 0, PyROOT_PyUnicode_FromString( "self" ) );
+         PyTuple_SET_ITEM( co_varnames, 1, PyROOT_PyUnicode_FromString( "*args" ) );
+      }
 
-   // TODO: static methods need no 'self' (but is harmless otherwise)
+      int co_argcount = PyTuple_Size( co_varnames );
 
    // for now, code object representing the statement 'pass'
       PyObject* co_code = PyString_FromStringAndSize( "d\x00\x00S", 4 );
@@ -225,15 +238,6 @@ namespace {
 
    // names, freevars, and cellvars go unused
       PyObject* co_unused = PyTuple_New( 0 );
-
-   // variable names are both the argument and local names
-      PyObject* co_varnames = PyTuple_New( co_argcount );
-      PyTuple_SET_ITEM( co_varnames, 0, PyString_FromString( "self" ) );
-      if ( methods.size() == 1 ) {
-         for ( int iarg = 1; iarg < co_argcount; ++iarg )
-            PyTuple_SET_ITEM( co_varnames, iarg, methods[0]->GetArgSpec( iarg - 1 ) );
-      } else
-         PyTuple_SET_ITEM( co_varnames, 1, PyString_FromString( "*args" ) );
 
    // filename is made-up
       PyObject* co_filename = PyString_FromString( "ROOT.py" );
@@ -280,11 +284,12 @@ namespace {
 #endif
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Create a tuple of default values, if there is only one method (otherwise
+/// leave undefined: this is only used by inspect for interactive help())
+
    PyObject* mp_func_defaults( MethodProxy* pymeth, void* )
    {
-   // Create a tuple of default values, if there is only one method (otherwise
-   // leave undefined: this is only used by inspect for interactive help())
       MethodProxy::Methods_t& methods = pymeth->fMethodInfo->fMethods;
 
       if ( methods.size() != 1 )
@@ -305,27 +310,30 @@ namespace {
       return defaults;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return this function's global dict (hard-wired to be the ROOT module); used
+/// for lookup of names from co_code indexing into co_names.
+
    PyObject* mp_func_globals( MethodProxy* /* pymeth */, void* )
    {
-   // Return this function's global dict (hard-wired to be the ROOT module); used
-   // for lookup of names from co_code indexing into co_names.
       PyObject* pyglobal = PyModule_GetDict( PyImport_AddModule( (char*)"ROOT" ) );
       Py_XINCREF( pyglobal );
       return pyglobal;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Get '_creates' boolean, which determines ownership of return values.
+
    PyObject* mp_getcreates( MethodProxy* pymeth, void* )
    {
-   // Get '_creates' boolean, which determines ownership of return values.
       return PyInt_FromLong( (Bool_t)IsCreator( pymeth->fMethodInfo->fFlags ) );
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Set '_creates' boolean, which determines ownership of return values.
+
    int mp_setcreates( MethodProxy* pymeth, PyObject* value, void* )
    {
-   // Set '_creates' boolean, which determines ownership of return values.
       if ( ! value ) {        // means that _creates is being deleted
          pymeth->fMethodInfo->fFlags &= ~TCallContext::kIsCreator;
          return 0;
@@ -345,10 +353,11 @@ namespace {
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Get '_mempolicy' enum, which determines ownership of call arguments.
+
    PyObject* mp_getmempolicy( MethodProxy* pymeth, void* )
    {
-   // Get '_mempolicy' enum, which determines ownership of call arguments.
       if ( (Bool_t)(pymeth->fMethodInfo->fFlags & TCallContext::kUseHeuristics ) )
          return PyInt_FromLong( TCallContext::kUseHeuristics );
 
@@ -358,10 +367,11 @@ namespace {
       return PyInt_FromLong( -1 );
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Set '_mempolicy' enum, which determines ownership of call arguments.
+
    int mp_setmempolicy( MethodProxy* pymeth, PyObject* value, void* )
    {
-   // Set '_mempolicy' enum, which determines ownership of call arguments.
       Long_t mempolicy = PyLong_AsLong( value );
       if ( mempolicy == TCallContext::kUseHeuristics ) {
          pymeth->fMethodInfo->fFlags |= TCallContext::kUseHeuristics;
@@ -378,18 +388,20 @@ namespace {
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Get '_threaded' boolean, which determines whether the GIL will be released.
+
    PyObject* mp_getthreaded( MethodProxy* pymeth, void* )
    {
-   // Get '_threaded' boolean, which determines whether the GIL will be released.
       return PyInt_FromLong(
          (Bool_t)(pymeth->fMethodInfo->fFlags & TCallContext::kReleaseGIL) );
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Set '_threaded' boolean, which determines whether the GIL will be released.
+
    int mp_setthreaded( MethodProxy* pymeth, PyObject* value, void* )
    {
-   // Set '_threaded' boolean, which determines whether the GIL will be released.
       Long_t isthreaded = PyLong_AsLong( value );
       if ( isthreaded == -1 && PyErr_Occurred() ) {
          PyErr_SetString( PyExc_ValueError, "a boolean 1 or 0 is required for _creates" );
@@ -404,7 +416,8 @@ namespace {
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
    PyGetSetDef mp_getset[] = {
       { (char*)"__name__",   (getter)mp_name,   NULL, NULL, NULL },
       { (char*)"__module__", (getter)mp_module, NULL, NULL, NULL },
@@ -539,10 +552,11 @@ namespace {
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Descriptor; create and return a new bound method proxy (language requirement).
+
    MethodProxy* mp_descrget( MethodProxy* pymeth, ObjectProxy* pyobj, PyObject* )
    {
-   // Descriptor; create and return a new bound method proxy (language requirement).
       MethodProxy* newPyMeth = (MethodProxy*)MethodProxy_Type.tp_alloc( &MethodProxy_Type, 0 );
 
    // method info is shared, as it contains the collected overload knowledge
@@ -569,16 +583,15 @@ namespace {
       return pymeth;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Deallocate memory held by method proxy object.
+
    void mp_dealloc( MethodProxy* pymeth )
    {
-   // Deallocate memory held by method proxy object.
       PyObject_GC_UnTrack( pymeth );
 
-      if ( ! IsPseudoFunc( pymeth ) ) {
-         Py_XDECREF( (PyObject*)pymeth->fSelf );
-      }
-
+      if ( ! IsPseudoFunc( pymeth ) )
+         Py_CLEAR( pymeth->fSelf );
       pymeth->fSelf = NULL;
 
       if ( --(*pymeth->fMethodInfo->fRefCount) <= 0 ) {
@@ -589,41 +602,43 @@ namespace {
    }
 
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Hash of method proxy object for insertion into dictionaries; with actual
+/// method (fMethodInfo) shared, its address is best suited.
+
    Long_t mp_hash( MethodProxy* pymeth )
    {
-   // Hash of method proxy object for insertion into dictionaries; with actual
-   // method (fMethodInfo) shared, its address is best suited.
       return _Py_HashPointer( pymeth->fMethodInfo );
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Garbage collector traverse of held python member objects.
+
    int mp_traverse( MethodProxy* pymeth, visitproc visit, void* args )
    {
-   // Garbage collector traverse of held python member objects.
       if ( pymeth->fSelf && ! IsPseudoFunc( pymeth ) )
          return visit( (PyObject*)pymeth->fSelf, args );
 
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Garbage collector clear of held python member objects.
+
    int mp_clear( MethodProxy* pymeth )
    {
-   // Garbage collector clear of held python member objects.
-      if ( ! IsPseudoFunc( pymeth ) ) {
-         Py_XDECREF( (PyObject*)pymeth->fSelf );
-      }
-
+      if ( ! IsPseudoFunc( pymeth ) )
+         Py_CLEAR( pymeth->fSelf );
       pymeth->fSelf = NULL;
 
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Rich set of comparison objects; only equals is defined.
+
    PyObject* mp_richcompare( MethodProxy* self, MethodProxy* other, int op )
    {
-   // Rich set of comparison objects; only equals is defined.
       if ( op != Py_EQ )
          return PyType_Type.tp_richcompare( (PyObject*)self, (PyObject*)other, op );
 
@@ -678,7 +693,8 @@ namespace {
       return 0;
    }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
    PyMethodDef mp_methods[] = {
       { (char*)"disp", (PyCFunction)mp_disp, METH_O, (char*)"select overload for dispatch" },
       { (char*)NULL, NULL, 0, NULL }
@@ -740,6 +756,9 @@ PyTypeObject MethodProxy_Type = {
 #if PY_VERSION_HEX >= 0x02060000
    , 0                        // tp_version_tag
 #endif
+#if PY_VERSION_HEX >= 0x03040000
+   , 0                        // tp_finalize
+#endif
 };
 
 } // namespace PyROOT
@@ -763,15 +782,17 @@ void PyROOT::MethodProxy::Set( const std::string& name, std::vector< PyCallable*
       fMethodInfo->fFlags |= TCallContext::kIsCreator;
 }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Fill in the data of a freshly created method proxy.
+
 void PyROOT::MethodProxy::AddMethod( PyCallable* pc )
 {
-// Fill in the data of a freshly created method proxy.
    fMethodInfo->fMethods.push_back( pc );
    fMethodInfo->fFlags &= ~TCallContext::kIsSorted;
 }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void PyROOT::MethodProxy::AddMethod( MethodProxy* meth )
 {
    fMethodInfo->fMethods.insert( fMethodInfo->fMethods.end(),
@@ -779,10 +800,11 @@ void PyROOT::MethodProxy::AddMethod( MethodProxy* meth )
    fMethodInfo->fFlags &= ~TCallContext::kIsSorted;
 }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Destructor (this object is reference counted).
+
 PyROOT::MethodProxy::MethodInfo_t::~MethodInfo_t()
 {
-// Destructor (this object is reference counted).
    for ( Methods_t::iterator it = fMethods.begin(); it != fMethods.end(); ++it ) {
       delete *it;
    }

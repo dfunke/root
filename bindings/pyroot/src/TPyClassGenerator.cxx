@@ -3,13 +3,15 @@
 
 // Bindings
 #include "PyROOT.h"
+#include "PyStrings.h"
 #include "TPyClassGenerator.h"
-#include "Utility.h"
 #include "TPyReturn.h"
+#include "Utility.h"
 
 // ROOT
 #include "TClass.h"
 #include "TInterpreter.h"
+#include "TROOT.h"
 
 // Standard
 #include <sstream>
@@ -36,6 +38,82 @@ TClass* TPyClassGenerator::GetClass( const char* name, Bool_t load, Bool_t silen
    if ( ! load || ! name )
       return 0;
 
+// first, check whether the name is of a module
+   PyObject* modules = PySys_GetObject( const_cast<char*>("modules") );
+   PyObject* pyname = PyROOT_PyUnicode_FromString( name );
+   PyObject* keys = PyDict_Keys( modules );
+   Bool_t isModule = PySequence_Contains( keys, pyname );
+   Py_DECREF( keys );
+   Py_DECREF( pyname );
+
+   if ( isModule ) {
+   // the normal TClass::GetClass mechanism doesn't allow direct returns, so
+   // do our own check
+      TClass* cl = (TClass*)gROOT->GetListOfClasses()->FindObject( name );
+      if ( cl ) return cl;
+
+      std::ostringstream nsCode;
+      nsCode << "namespace " << name << " {\n";
+
+   // add all free functions
+      PyObject* mod = PyDict_GetItemString( modules, const_cast<char*>(name) );
+      PyObject* dct = PyModule_GetDict( mod );
+      keys = PyDict_Keys( dct );
+
+      for ( int i = 0; i < PyList_GET_SIZE( keys ); ++i ) {
+         PyObject* key = PyList_GET_ITEM( keys, i );
+         Py_INCREF( key );
+
+         PyObject* attr = PyDict_GetItem( dct, key );
+         Py_INCREF( attr );
+
+      // TODO: refactor the code below with the class method code
+         if ( PyCallable_Check( attr ) && \
+                 ! (PyClass_Check( attr ) || PyObject_HasAttr( attr, PyROOT::PyStrings::gBases )) ) {
+            std::string func_name = PyROOT_PyUnicode_AsString( key );
+
+         // figure out number of variables required
+            PyObject* func_code = PyObject_GetAttrString( attr, (char*)"func_code" );
+            PyObject* var_names =
+               func_code ? PyObject_GetAttrString( func_code, (char*)"co_varnames" ) : NULL;
+            int nVars = var_names ? PyTuple_GET_SIZE( var_names ) : 0 /* TODO: probably large number, all default? */;
+            if ( nVars < 0 ) nVars = 0;
+            Py_XDECREF( var_names );
+            Py_XDECREF( func_code );
+
+            nsCode  << " TPyReturn " << func_name << "(";
+            for ( int ivar = 0; ivar < nVars; ++ivar ) {
+                nsCode << "const TPyArg& a" << ivar;
+                if ( ivar != nVars-1 ) nsCode << ", ";
+            }
+            nsCode << ") {\n";
+            nsCode << "  std::vector<TPyArg> v; v.reserve(" << nVars << ");\n";
+
+         // add the variables
+            for ( int ivar = 0; ivar < nVars; ++ ivar )
+               nsCode << "  v.push_back(a" << ivar << ");\n";
+
+         // call dispatch (method or class pointer hard-wired)
+            nsCode << "  return TPyReturn(TPyArg::CallMethod((PyObject*)" << (void*)attr << ", v)); }\n";
+         }
+
+         Py_DECREF( attr );
+         Py_DECREF( key );
+      }
+
+      Py_DECREF( keys );
+
+      nsCode << " }";
+
+      if ( gInterpreter->LoadText( nsCode.str().c_str() ) ) {
+          TClass* klass = new TClass( name, silent );
+          TClass::AddClass( klass );
+          return klass;
+      }
+
+      return nullptr;
+   }
+
 // determine module and class name part
    std::string clName = name;
    std::string::size_type pos = clName.rfind( '.' );
@@ -46,9 +124,13 @@ TClass* TPyClassGenerator::GetClass( const char* name, Bool_t load, Bool_t silen
    std::string mdName = clName.substr( 0, pos );
    clName = clName.substr( pos+1, std::string::npos );
 
-// ROOT doesn't know about python modules; the class may exist (TODO: add scopes)
-   if ( TClass::GetClass( clName.c_str(), load, silent ) )
-      return TClass::GetClass( clName.c_str(), load, silent );
+// create class in namespace, if it exists (no load, silent)
+   Bool_t useNS = gROOT->GetListOfClasses()->FindObject( mdName.c_str() ) != 0;
+   if ( ! useNS ) {
+   // the class itself may exist if we're using the global scope
+      TClass* cl = (TClass*)gROOT->GetListOfClasses()->FindObject( clName.c_str() );
+      if ( cl ) return cl;
+   }
 
 // locate and get class
    PyObject* mod = PyImport_AddModule( const_cast< char* >( mdName.c_str() ) );
@@ -78,6 +160,7 @@ TClass* TPyClassGenerator::GetClass( const char* name, Bool_t load, Bool_t silen
 
 // pre-amble Cling proxy class
    std::ostringstream proxyCode;
+   if ( useNS ) proxyCode << "namespace " << mdName << " { ";
    proxyCode << "class " << clName << " {\nprivate:\n PyObject* fPyObject;\npublic:\n";
 
 // loop over and add member functions
@@ -147,29 +230,35 @@ TClass* TPyClassGenerator::GetClass( const char* name, Bool_t load, Bool_t silen
 
 // closing and building of Cling proxy class
    proxyCode << "};";
+   if ( useNS ) proxyCode << " }";
+
+   Py_DECREF( attrs );
+// done with pyclass, decref here, assuming module is kept
+   Py_DECREF( pyclass );
 
 // body compilation
-   gInterpreter->LoadText( proxyCode.str().c_str() );
+   if ( ! gInterpreter->LoadText( proxyCode.str().c_str() ) )
+      return nullptr;
 
 // done, let ROOT manage the new class
-   Py_DECREF( pyclass ); // or not, given hard-wired pointers above?
-
-   TClass* klass = new TClass( clName.c_str(), silent );
+   TClass* klass = new TClass( useNS ? (mdName+"::"+clName).c_str() : clName.c_str(), silent );
    TClass::AddClass( klass );
 
    return klass;
 }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Just forward; based on type name only.
+
 TClass* TPyClassGenerator::GetClass( const type_info& typeinfo, Bool_t load, Bool_t silent )
 {
-// Just forward; based on type name only.
    return GetClass( typeinfo.name(), load, silent );
 }
 
-//____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Just forward; based on type name only
+
 TClass* TPyClassGenerator::GetClass( const type_info& typeinfo, Bool_t load )
 {
-// Just forward; based on type name only
    return GetClass( typeinfo.name(), load );
 }

@@ -2,7 +2,7 @@ from __future__ import generators
 # @(#)root/pyroot:$Id$
 # Author: Wim Lavrijsen (WLavrijsen@lbl.gov)
 # Created: 02/20/03
-# Last: 01/05/15
+# Last: 03/25/15
 
 """PyROOT user module.
 
@@ -292,15 +292,13 @@ try:
 except ImportError:
    import builtins as __builtin__  # name change in p3
 _orig_ihook = __builtin__.__import__
-def _importhook( name, glbls = {}, lcls = {}, fromlist = [], level = -1 ):
+def _importhook( name, *args, **kwds ):
    if name[0:5] == 'ROOT.':
       try:
          sys.modules[ name ] = getattr( sys.modules[ 'ROOT' ], name[5:] )
       except Exception:
          pass
-   if 5 <= sys.version_info[1]:    # minor
-      return _orig_ihook( name, glbls, lcls, fromlist, level )
-   return _orig_ihook( name, glbls, lcls, fromlist )
+   return _orig_ihook( name, *args, **kwds )
 
 __builtin__.__import__ = _importhook
 
@@ -434,16 +432,16 @@ class ModuleFacade( types.ModuleType ):
          return self.module.__all__
 
     # lookup into ROOT (which may cause python-side enum/class/global creation)
-      attr = _root.LookupCppEntity( name, PyConfig.ExposeCppMacros )
-
-    # the call above will raise AttributeError as necessary; so if we get here,
-    # attr is valid: cache as appropriate, so we don't come back
-      if type(attr) == _root.PropertyProxy:
-         setattr( self.__class__, name, attr )         # descriptor
-         return getattr( self, name )
-      else:
-         self.__dict__[ name ] = attr                  # normal member
-         return attr
+      try:
+         attr = _root.LookupCppEntity( name, PyConfig.ExposeCppMacros )
+         if type(attr) == _root.PropertyProxy:
+            setattr( self.__class__, name, attr )      # descriptor
+            return getattr( self, name )
+         else:
+            self.__dict__[ name ] = attr               # normal member
+            return attr
+      except AttributeError:
+         pass
 
     # reaching this point means failure ...
       raise AttributeError( name )
@@ -491,7 +489,9 @@ class ModuleFacade( types.ModuleType ):
 
     # special case for cout (backwards compatibility)
       if hasattr( cppyy.gbl.std, '__1' ):
-         self.__dict__[ 'cout' ] = getattr( cppyy.gbl.std, '__1' ).cout
+         attr_1 = getattr( cppyy.gbl.std, '__1' )
+         if hasattr( attr_1, 'cout' ):
+            self.__dict__[ 'cout' ] = attr_1.cout
 
     # custom logon file (must be after creation of ROOT globals)
       if hasargv and not '-n' in sys.argv:

@@ -31,23 +31,8 @@ Additional distributions are also provided by the
 
 */
 
-
-
-#if defined(__CINT__) && !defined(__MAKECINT__)
-// avoid to include header file when using CINT
-#ifndef _WIN32
-#include "../lib/libMathCore.so"
-#else
-#include "../bin/libMathCore.dll"
-#endif
-
-#else
-
-
 #ifndef ROOT_Math_PdfFuncMathCore
 #define ROOT_Math_PdfFuncMathCore
-
-
 
 
 namespace ROOT {
@@ -186,7 +171,26 @@ namespace Math {
   double chisquared_pdf(double x, double r, double x0 = 0);
 
 
+  /**
 
+  Crystal ball function
+
+  See the definition at 
+  <A HREF="http://en.wikipedia.org/wiki/Crystal_Ball_function">
+  Wikipedia</A>.
+
+  It is not really a pdf since it is not normalized
+
+  @ingroup PdfFunc
+
+  */
+   
+  double crystalball_function(double x, double alpha, double n, double sigma, double x0 = 0);
+
+   /** 
+       pdf definition of the crystal_ball which is defined only for n > 1 otehrwise integral is diverging
+    */
+  double crystalball_pdf(double x, double alpha, double n, double sigma, double x0 = 0);
 
   /**
 
@@ -410,5 +414,3 @@ namespace Math {
 
 
 #endif // ROOT_Math_PdfFunc
-
-#endif // if defined (__CINT__) && !defined(__MAKECINT__)

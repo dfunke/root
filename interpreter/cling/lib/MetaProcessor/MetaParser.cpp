@@ -16,6 +16,7 @@
 #include "cling/Interpreter/InvocationOptions.h"
 #include "cling/Interpreter/Value.h"
 
+#include "llvm/ADT/Optional.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_ostream.h"
@@ -60,12 +61,14 @@ namespace cling {
         || MergedTok.is(tok::comment))
       return;
 
+    //look ahead for the next token without consuming it
     Token Tok = lookAhead(1);
     Token PrevTok = Tok;
     while (Tok.isNot(stopAt) && Tok.isNot(tok::eof)){
       //MergedTok.setLength(MergedTok.getLength() + Tok.getLength());
       m_TokenCache.erase(m_TokenCache.begin() + 1);
       PrevTok = Tok;
+      //look ahead for the next token without consuming it
       Tok = lookAhead(1);
     }
     MergedTok.setKind(tok::raw_ident);
@@ -121,7 +124,8 @@ namespace cling {
       || isXCommand(actionResult, resultValue) ||isTCommand(actionResult)
       || isAtCommand()
       || isqCommand() || isUCommand(actionResult) || isICommand()
-      || isOCommand() || israwInputCommand() || isprintDebugCommand()
+      || isOCommand() || israwInputCommand()
+      || isdebugCommand() || isprintDebugCommand()
       || isdynamicExtensionsCommand() || ishelpCommand() || isfileExCommand()
       || isfilesCommand() || isClassCommand() || isNamespaceCommand() || isgCommand()
       || isTypedefCommand()
@@ -259,18 +263,13 @@ namespace cling {
       // There might be ArgList
       consumeAnyStringToken(tok::l_paren);
       llvm::StringRef file(getCurTok().getIdent());
-      llvm::StringRef args;
       consumeToken();
-      if (getCurTok().is(tok::l_paren) && isExtraArgList()) {
-        args = getCurTok().getIdent();
-        consumeToken(); // consume the closing paren
-      }
-      actionResult = m_Actions->actOnxCommand(file, args, resultValue);
+      // '(' to end of string:
 
-      if (getCurTok().is(tok::comment)) {
-        consumeAnyStringToken();
-        m_Actions->actOnComment(getCurTok().getIdent());
-      }
+      std::string args = getCurTok().getBufStart();
+      if (args.empty())
+        args = "()";
+      actionResult = m_Actions->actOnxCommand(file, args, resultValue);
       return true;
     }
 
@@ -381,6 +380,20 @@ namespace cling {
     return false;
   }
 
+  bool MetaParser::isdebugCommand() {
+    if (getCurTok().is(tok::ident) &&
+        getCurTok().getIdent().equals("debug")) {
+      llvm::Optional<int> mode;
+      consumeToken();
+      skipWhitespace();
+      if (getCurTok().is(tok::constant))
+        mode = getCurTok().getConstant();
+      m_Actions->actOndebugCommand(mode);
+      return true;
+    }
+    return false;
+  }
+
   bool MetaParser::isprintDebugCommand() {
     if (getCurTok().is(tok::ident) &&
         getCurTok().getIdent().equals("printDebug")) {
@@ -401,15 +414,10 @@ namespace cling {
        //MetaSema::SwitchMode mode = MetaSema::kToggle;
       consumeToken();
       skipWhitespace();
-      if (!getCurTok().is(tok::quote))
+      if (!getCurTok().is(tok::stringlit))
         return false; // FIXME: Issue proper diagnostics
+      std::string ident = getCurTok().getIdentNoQuotes();
       consumeToken();
-      if (!getCurTok().is(tok::ident))
-        return false; // FIXME: Issue proper diagnostics
-      std::string ident = getCurTok().getIdent();
-      consumeToken();
-      if (!getCurTok().is(tok::quote))
-        return false; // FIXME: Issue proper diagnostics
       m_Actions->actOnstoreStateCommand(ident);
       return true;
     }
@@ -422,15 +430,10 @@ namespace cling {
       //MetaSema::SwitchMode mode = MetaSema::kToggle;
       consumeToken();
       skipWhitespace();
-      if (!getCurTok().is(tok::quote))
+      if (!getCurTok().is(tok::stringlit))
         return false; // FIXME: Issue proper diagnostics
+      std::string ident = getCurTok().getIdentNoQuotes();
       consumeToken();
-      if (!getCurTok().is(tok::ident))
-        return false; // FIXME: Issue proper diagnostics
-      std::string ident = getCurTok().getIdent();
-      consumeToken();
-      if (!getCurTok().is(tok::quote))
-        return false; // FIXME: Issue proper diagnostics
       m_Actions->actOncompareStateCommand(ident);
       return true;
     }

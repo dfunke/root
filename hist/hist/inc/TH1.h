@@ -167,11 +167,12 @@ public:
    enum {
       kNoStats     = BIT(9),  // don't draw stats box
       kUserContour = BIT(10), // user specified contour levels
-      kCanRebin    = BIT(11), // FIXME DEPRECATED - to be removed, replaced by SetCanExtend / CanExtendAllAxes
+      //kCanRebin    = BIT(11), // FIXME DEPRECATED - to be removed, replaced by SetCanExtend / CanExtendAllAxes
       kLogX        = BIT(15), // X-axis in log scale
       kIsZoomed    = BIT(16), // bit set when zooming on Y axis
       kNoTitle     = BIT(17), // don't draw the histogram title
-      kIsAverage   = BIT(18)  // Bin contents are average (used by Add)
+      kIsAverage   = BIT(18), // Bin contents are average (used by Add)
+      kIsNotW      = BIT(19)  // Histogram is forced to be not weighted even when the histogram is filled with weighted different than 1.
    };
    // size of statistics data (size of  array used in GetStats()/ PutStats )
    // s[0]  = sumw       s[1]  = sumw2
@@ -305,14 +306,15 @@ public:
    virtual Int_t    GetQuantiles(Int_t nprobSum, Double_t *q, const Double_t *probSum=0);
    virtual Double_t GetRandom() const;
    virtual void     GetStats(Double_t *stats) const;
-           Double_t GetStdDev(Int_t axis=1) const { return GetRMS(axis); }
-           Double_t GetStdDevError(Int_t axis=1) const { return GetRMSError(axis); }
+   virtual Double_t GetStdDev(Int_t axis=1) const;
+   virtual Double_t GetStdDevError(Int_t axis=1) const;
    virtual Double_t GetSumOfWeights() const;
    virtual TArrayD *GetSumw2() {return &fSumw2;}
    virtual const TArrayD *GetSumw2() const {return &fSumw2;}
    virtual Int_t    GetSumw2N() const {return fSumw2.fN;}
-   virtual Double_t GetRMS(Int_t axis=1) const;
-   virtual Double_t GetRMSError(Int_t axis=1) const;
+           Double_t GetRMS(Int_t axis=1) const { return GetStdDev(axis); }
+           Double_t GetRMSError(Int_t axis=1) const { return GetStdDevError(axis); }
+
    virtual Double_t GetSkewness(Int_t axis=1) const;
            TAxis*   GetXaxis()  { return &fXaxis; }
            TAxis*   GetYaxis()  { return &fYaxis; }
@@ -455,7 +457,7 @@ public:
    virtual void     Reset(Option_t *option="");
    virtual void     SetBinsLength(Int_t n=-1);
 
-   ClassDef(TH1C,1)  //1-Dim histograms (one char per channel)
+   ClassDef(TH1C,2)  //1-Dim histograms (one char per channel)
 
    friend  TH1C     operator*(Double_t c1, const TH1C &h1);
    friend  TH1C     operator*(const TH1C &h1, Double_t c1);
@@ -496,7 +498,7 @@ public:
    virtual void     Reset(Option_t *option="");
    virtual void     SetBinsLength(Int_t n=-1);
 
-   ClassDef(TH1S,1)  //1-Dim histograms (one short per channel)
+   ClassDef(TH1S,2)  //1-Dim histograms (one short per channel)
 
    friend  TH1S     operator*(Double_t c1, const TH1S &h1);
    friend  TH1S     operator*(const TH1S &h1, Double_t c1);
@@ -537,7 +539,7 @@ public:
    virtual void     Reset(Option_t *option="");
    virtual void     SetBinsLength(Int_t n=-1);
 
-   ClassDef(TH1I,1)  //1-Dim histograms (one 32 bits integer per channel)
+   ClassDef(TH1I,2)  //1-Dim histograms (one 32 bits integer per channel)
 
    friend  TH1I     operator*(Double_t c1, const TH1I &h1);
    friend  TH1I     operator*(const TH1I &h1, Double_t c1);
@@ -580,7 +582,7 @@ public:
    virtual void     Reset(Option_t *option="");
    virtual void     SetBinsLength(Int_t n=-1);
 
-   ClassDef(TH1F,1)  //1-Dim histograms (one float per channel)
+   ClassDef(TH1F,2)  //1-Dim histograms (one float per channel)
 
    friend  TH1F     operator*(Double_t c1, const TH1F &h1);
    friend  TH1F     operator*(const TH1F &h1, Double_t c1);
@@ -623,7 +625,7 @@ public:
    virtual void     Reset(Option_t *option="");
    virtual void     SetBinsLength(Int_t n=-1);
 
-   ClassDef(TH1D,1)  //1-Dim histograms (one double per channel)
+   ClassDef(TH1D,2)  //1-Dim histograms (one double per channel)
 
    friend  TH1D     operator*(Double_t c1, const TH1D &h1);
    friend  TH1D     operator*(const TH1D &h1, Double_t c1);

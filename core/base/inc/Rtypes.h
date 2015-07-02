@@ -65,6 +65,7 @@ enum EColor { kWhite =0,   kBlack =1,   kGray=920,
 class TClassStreamer;   // Streamer functor for a class
 class TMemberStreamer;  // Streamer functor for a data member
 typedef void (*ClassStreamerFunc_t)(TBuffer&, void*);  // Streamer function for a class
+typedef void (*ClassConvStreamerFunc_t)(TBuffer&, void*, const TClass*);  // Streamer function for a class with conversion.
 typedef void (*MemberStreamerFunc_t)(TBuffer&, void*, Int_t); // Streamer function for a data member
 
 // This class is used to implement proxy around collection classes.
@@ -243,21 +244,6 @@ public: \
    static int ImplFileLine(); \
    static const char *ImplFileName();
 
-#define _ClassDefInterp_(name,id) \
-private: \
-public: \
-   static TClass *Class() { static TClass* sIsA = 0; if (!sIsA) sIsA = TClass::GetClass(#name); return sIsA; } \
-   static const char *Class_Name() { return #name; } \
-   static Version_t Class_Version() { return id; } \
-   static TClass *Dictionary() { return 0; } \
-   virtual TClass *IsA() const { return name::Class(); } \
-   virtual void ShowMembers(TMemberInspector&insp) const { ::ROOT::Class_ShowMembers(name::Class(), this, insp); } \
-   virtual void Streamer(TBuffer&) { Error ("Streamer", "Cannot stream interpreted class."); } \
-   void StreamerNVirtual(TBuffer&ClassDef_StreamerNVirtual_b) { name::Streamer(ClassDef_StreamerNVirtual_b); } \
-   static const char *DeclFileName() { return __FILE__; } \
-   static int ImplFileLine() { return 0; } \
-   static const char *ImplFileName() { return __FILE__; }
-
 #define ClassDef(name,id) \
    _ClassDef_(name,id,virtual,)   \
    static int DeclFileLine() { return __LINE__; }
@@ -378,8 +364,12 @@ namespace ROOT {                                                     \
 #define _R_PragmaStr(x) _Pragma(#x)
 #ifdef __CLING__
 # define R__LOAD_LIBRARY(LIBRARY) _R_PragmaStr(cling load ( #LIBRARY ))
+# define R__ADD_INCLUDE_PATH(PATH) _R_PragmaStr(cling add_include_path ( #PATH ))
+# define R__ADD_LIBRARY_PATH(PATH) _R_PragmaStr(cling add_library_path ( #PATH ))
 #elif defined(R__WIN32)
 # define R__LOAD_LIBRARY(LIBRARY) _R_PragmaStr(comment(lib, #LIBRARY))
+# define R__ADD_INCLUDE_PATH(PATH) _R_PragmaStr(comment(path, #PATH))
+# define R__ADD_LIBRARY_PATH(PATH) _R_PragmaStr(comment(path, #PATH))
 #else
 // No way to inform linker though preprocessor :-(
 // We could even inform the user:
@@ -389,6 +379,8 @@ namespace ROOT {                                                     \
                 ". Use -L and -l instead.")
 */
 # define R__LOAD_LIBRARY(LIBRARY)
+# define R__ADD_INCLUDE_PATH(PATH)
+# define R__ADD_LIBRARY_PATH(PATH)
 #endif
 
 #endif

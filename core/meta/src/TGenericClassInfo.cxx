@@ -49,7 +49,7 @@ namespace ROOT {
         fIsA(isa),
         fVersion(1),
         fMerge(0),fResetAfterMerge(0),fNew(0),fNewArray(0),fDelete(0),fDeleteArray(0),fDestructor(0), fDirAutoAdd(0), fStreamer(0),
-        fStreamerFunc(0), fCollectionProxy(0), fSizeof(sizof), fPragmaBits(pragmabits),
+        fStreamerFunc(0), fConvStreamerFunc(0), fCollectionProxy(0), fSizeof(sizof), fPragmaBits(pragmabits),
         fCollectionProxyInfo(0), fCollectionStreamerInfo(0)
    {
       // Constructor.
@@ -69,7 +69,7 @@ namespace ROOT {
         fIsA(isa),
         fVersion(version),
         fMerge(0),fResetAfterMerge(0),fNew(0),fNewArray(0),fDelete(0),fDeleteArray(0),fDestructor(0), fDirAutoAdd(0), fStreamer(0),
-        fStreamerFunc(0), fCollectionProxy(0), fSizeof(sizof), fPragmaBits(pragmabits),
+        fStreamerFunc(0), fConvStreamerFunc(0), fCollectionProxy(0), fSizeof(sizof), fPragmaBits(pragmabits),
         fCollectionProxyInfo(0), fCollectionStreamerInfo(0)
 
    {
@@ -91,7 +91,7 @@ namespace ROOT {
         fIsA(0),
         fVersion(version),
         fMerge(0),fResetAfterMerge(0),fNew(0),fNewArray(0),fDelete(0),fDeleteArray(0),fDestructor(0), fDirAutoAdd(0), fStreamer(0),
-        fStreamerFunc(0), fCollectionProxy(0), fSizeof(0), fPragmaBits(pragmabits),
+        fStreamerFunc(0), fConvStreamerFunc(0), fCollectionProxy(0), fSizeof(0), fPragmaBits(pragmabits),
         fCollectionProxyInfo(0), fCollectionStreamerInfo(0)
 
    {
@@ -219,6 +219,7 @@ namespace ROOT {
          fClass->SetDestructor(fDestructor);
          fClass->SetDirectoryAutoAdd(fDirAutoAdd);
          fClass->SetStreamerFunc(fStreamerFunc);
+         fClass->SetConvStreamerFunc(fConvStreamerFunc);
          fClass->SetMerge(fMerge);
          fClass->SetResetAfterMerge(fResetAfterMerge);
          fClass->AdoptStreamer(fStreamer); fStreamer = 0;
@@ -234,31 +235,34 @@ namespace ROOT {
 
          //---------------------------------------------------------------------
          // Attach the schema evolution information
-         //---------------------------------------------------------------------
+         ///////////////////////////////////////////////////////////////////////
+
          CreateRuleSet( fReadRules, true );
          CreateRuleSet( fReadRawRules, false );
       }
       return fClass;
    }
 
-   //---------------------------------------------------------------------------
+   /////////////////////////////////////////////////////////////////////////////
+   /// Attach the schema evolution information to TClassObject
+
    void TGenericClassInfo::CreateRuleSet( std::vector<TSchemaHelper>& vect,
                                           Bool_t ProcessReadRules )
    {
-      // Attach the schema evolution information to TClassObject
-
       if ( vect.empty() ) {
          return;
       }
 
       //------------------------------------------------------------------------
       // Get the rules set
-      //------------------------------------------------------------------------
+      //////////////////////////////////////////////////////////////////////////
+
       TSchemaRuleSet* rset = fClass->GetSchemaRules( kTRUE );
 
       //------------------------------------------------------------------------
       // Process the rules
-      //------------------------------------------------------------------------
+      //////////////////////////////////////////////////////////////////////////
+
       TSchemaRule* rule;
       TString errmsg;
       std::vector<TSchemaHelper>::iterator it;
@@ -448,6 +452,14 @@ namespace ROOT {
 
       fStreamerFunc = streamer;
       if (fClass) fClass->SetStreamerFunc(streamer);
+   }
+
+   void TGenericClassInfo::SetConvStreamerFunc(ClassConvStreamerFunc_t streamer)
+   {
+      // Set a wrapper around the Streamer memger function.
+
+      fConvStreamerFunc = streamer;
+      if (fClass) fClass->SetConvStreamerFunc(streamer);
    }
 
    const char *TGenericClassInfo::GetDeclFileName() const

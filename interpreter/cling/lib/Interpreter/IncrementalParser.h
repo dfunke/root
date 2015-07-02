@@ -12,6 +12,7 @@
 
 #include "clang/Basic/SourceLocation.h"
 
+#include "llvm/ADT/PointerIntPair.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 
@@ -41,7 +42,7 @@ namespace cling {
   class Interpreter;
   class Transaction;
   class TransactionPool;
-  class TransactionTransformer;
+  class ASTTransformer;
 
   ///\brief Responsible for the incremental parsing and compilation of input.
   ///
@@ -88,14 +89,6 @@ namespace cling {
     ///
     std::unique_ptr<clang::CodeGenerator> m_CodeGen;
 
-    ///\brief Contains the transaction AST transformers.
-    ///
-    llvm::SmallVector<TransactionTransformer*, 6> m_ASTTransformers;
-
-    ///\brief Contains the transaction IR transformers.
-    ///
-    llvm::SmallVector<TransactionTransformer*, 2> m_IRTransformers;
-
     ///\brief Pool of reusable block-allocated transactions.
     ///
     std::unique_ptr<TransactionPool> m_TransactionPool;
@@ -106,11 +99,13 @@ namespace cling {
       kSuccessWithWarnings,
       kFailed
     };
+    typedef llvm::PointerIntPair<Transaction*, 2, EParseResult>
+      ParseResultTransaction;
     IncrementalParser(Interpreter* interp, int argc, const char* const *argv,
                       const char* llvmdir);
     ~IncrementalParser();
 
-    void Initialize(llvm::SmallVectorImpl<Transaction*>& result);
+    void Initialize(llvm::SmallVectorImpl<ParseResultTransaction>& result);
     clang::CompilerInstance* getCI() const { return m_CI.get(); }
     clang::Parser* getParser() const { return m_Parser.get(); }
     clang::CodeGenerator* getCodeGenerator() const { return m_CodeGen.get(); }
@@ -126,20 +121,21 @@ namespace cling {
 
     ///\brief Finishes a transaction.
     ///
-    Transaction* endTransaction(Transaction* T);
+    ParseResultTransaction endTransaction(Transaction* T);
 
     ///\brief Commits a transaction if it was complete. I.e pipes it
     /// through the consumer chain, including codegen.
     ///
-    ///\param[in] T - the transaction to be committed
+    ///\param[in] PRT - the transaction (ParseResultTransaction, really) to be
+    /// committed
     ///
-    void commitTransaction(Transaction* T);
+    void commitTransaction(ParseResultTransaction PRT);
 
-    ///\brief Runs the consumers (e.g. CodeGen) on a transaction.
+    ///\brief Runs the consumers (e.g. CodeGen) on a non-parsed transaction.
     ///
     ///\param[in] T - the transaction to be consumed
     ///
-    void codeGenTransaction(Transaction* T);
+    void emitTransaction(Transaction* T);
 
     ///\brief Reverts the interpreter into its previous state.
     ///
@@ -154,7 +150,7 @@ namespace cling {
     ///\brief Returns the first transaction the incremental parser saw.
     ///
     const Transaction* getFirstTransaction() const {
-      if (!m_Transactions.size())
+      if (m_Transactions.empty())
         return 0;
       return m_Transactions.front();
     }
@@ -162,7 +158,7 @@ namespace cling {
     ///\brief Returns the last transaction the incremental parser saw.
     ///
     Transaction* getLastTransaction() {
-      if (!m_Transactions.size())
+      if (m_Transactions.empty())
         return 0;
       return m_Transactions.back();
     }
@@ -170,7 +166,7 @@ namespace cling {
     ///\brief Returns the last transaction the incremental parser saw.
     ///
     const Transaction* getLastTransaction() const {
-      if (!m_Transactions.size())
+      if (m_Transactions.empty())
         return 0;
       return m_Transactions.back();
     }
@@ -197,7 +193,7 @@ namespace cling {
     ///\param[in] Opts - The compilation options to use.
     ///\returns the declarations that were compiled.
     ///
-    Transaction* Compile(llvm::StringRef input, const CompilationOptions& Opts);
+    ParseResultTransaction Compile(llvm::StringRef input, const CompilationOptions& Opts);
 
     ///\brief Parses the given input without calling the custom consumers and
     /// code generation.
@@ -209,7 +205,7 @@ namespace cling {
     ///\param[in] Opts - The compilation options to use.
     ///\returns The transaction corresponding to the input.
     ///
-    Transaction* Parse(llvm::StringRef input, const CompilationOptions& Opts);
+    ParseResultTransaction Parse(llvm::StringRef input, const CompilationOptions& Opts);
 
     void printTransactionStructure() const;
 
@@ -226,11 +222,11 @@ namespace cling {
     bool runStaticInitOnTransaction(Transaction* T) const;
 
   private:
-    ///\brief Runs AST transformers on a transaction.
+    ///\brief Finalizes the consumers (e.g. CodeGen) on a transaction.
     ///
-    ///\param[in] T - the transaction to be transformed.
+    ///\param[in] T - the transaction to be finalized
     ///
-    void transformTransactionAST(Transaction* T);
+    void codeGenTransaction(Transaction* T);
 
     ///\brief Runs IR transformers on a transaction.
     ///

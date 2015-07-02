@@ -33,6 +33,7 @@
 #include "TError.h"
 #include "TMetaUtils.h"
 #include "TCling.h"
+#include "ThreadLocalStorage.h"
 
 #include "cling/Interpreter/Interpreter.h"
 #include "cling/Utils/AST.h"
@@ -87,9 +88,14 @@ TClingMethodInfo::TClingMethodInfo(const TClingMethodInfo &rhs) :
    fContextIdx(rhs.fContextIdx),
    fIter(rhs.fIter),
    fTitle(rhs.fTitle),
-   fTemplateSpecIter(rhs.fTemplateSpecIter ? new SpecIterator(*rhs.fTemplateSpecIter) : 0),
+   fTemplateSpecIter(nullptr),
    fSingleDecl(rhs.fSingleDecl)
 {
+   if (rhs.fTemplateSpecIter) {
+      // The SpecIterator query the decl.
+      R__LOCKGUARD(gInterpreterMutex);
+      fTemplateSpecIter = new SpecIterator(*rhs.fTemplateSpecIter);
+   }
 }
 
 
@@ -98,6 +104,8 @@ TClingMethodInfo::TClingMethodInfo(cling::Interpreter *interp,
    : fInterp(interp), fFirstTime(true), fContextIdx(0U), fTitle(""),
      fTemplateSpecIter(0), fSingleDecl(0)
 {
+   R__LOCKGUARD(gInterpreterMutex);
+
    if (!ci || !ci->IsValid()) {
       return;
    }
@@ -436,7 +444,7 @@ long TClingMethodInfo::ExtraProperty() const
 
 TClingTypeInfo *TClingMethodInfo::Type() const
 {
-   static TClingTypeInfo ti(fInterp);
+   TTHREAD_TLS_DECL_ARG( TClingTypeInfo, ti, fInterp );
    if (!IsValid()) {
       ti.Init(clang::QualType());
       return &ti;
@@ -466,6 +474,8 @@ std::string TClingMethodInfo::GetMangledName() const
    std::string mangled_name;
    mangled_name.clear();
    const FunctionDecl* D = GetMethodDecl();
+
+   R__LOCKGUARD(gInterpreterMutex);
    GlobalDecl GD;
    if (const CXXConstructorDecl* Ctor = dyn_cast<CXXConstructorDecl>(D))
      GD = GlobalDecl(Ctor, Ctor_Complete);
@@ -473,6 +483,7 @@ std::string TClingMethodInfo::GetMangledName() const
      GD = GlobalDecl(Dtor, Dtor_Deleting);
    else
      GD = GlobalDecl(D);
+
    cling::utils::Analyze::maybeMangleDeclName(GD, mangled_name);
    return mangled_name;
 }
@@ -482,7 +493,7 @@ const char *TClingMethodInfo::GetPrototype(const ROOT::TMetaUtils::TNormalizedCt
    if (!IsValid()) {
       return 0;
    }
-   static std::string buf;
+   TTHREAD_TLS_DECL( std::string, buf );
    buf.clear();
    buf += Type()->Name();
    buf += ' ';
@@ -535,7 +546,7 @@ const char *TClingMethodInfo::Name(const ROOT::TMetaUtils::TNormalizedCtxt &norm
    if (!IsValid()) {
       return 0;
    }
-   static std::string buf;
+   TTHREAD_TLS_DECL( std::string, buf );
    ((TCling*)gCling)->GetFunctionName(GetMethodDecl(),buf);
    return buf.c_str();
 }
@@ -564,6 +575,9 @@ const char *TClingMethodInfo::Title()
    // Iterate over the redeclarations, we can have muliple definitions in the
    // redecl chain (came from merging of pcms).
    const FunctionDecl *FD = GetMethodDecl();
+
+   R__LOCKGUARD(gInterpreterMutex);
+
    // Could trigger deserialization of decls.
    cling::Interpreter::PushTransactionRAII RAII(fInterp);
    if (const FunctionDecl *AnnotFD

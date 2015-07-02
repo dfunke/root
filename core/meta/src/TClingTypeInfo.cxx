@@ -28,6 +28,9 @@
 #include "Rtypes.h" // for gDebug
 #include "TClassEdit.h"
 #include "TMetaUtils.h"
+#include "TInterpreter.h"
+#include "ThreadLocalStorage.h"
+
 #include "cling/Interpreter/Interpreter.h"
 #include "cling/Interpreter/LookupHelper.h"
 #include "cling/Utils/AST.h"
@@ -43,14 +46,16 @@
 
 using namespace std;
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 TClingTypeInfo::TClingTypeInfo(cling::Interpreter *interp, const char *name)
    : fInterp(interp)
 {
    Init(name);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void TClingTypeInfo::Init(const char *name)
 {
    fQualType = clang::QualType();
@@ -96,21 +101,24 @@ void TClingTypeInfo::Init(const char *name)
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 const char *TClingTypeInfo::Name() const
 {
    if (!IsValid()) {
       return "";
    }
    // Note: This *must* be static because we are returning a pointer inside it!
-   static std::string buf;
+   TTHREAD_TLS_DECL( std::string, buf);
    buf.clear();
 
+   R__LOCKGUARD(gInterpreterMutex);
    ROOT::TMetaUtils::GetFullyQualifiedTypeName(buf,fQualType,*fInterp);
    return buf.c_str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 long TClingTypeInfo::Property() const
 {
    if (!IsValid()) {
@@ -181,7 +189,8 @@ long TClingTypeInfo::Property() const
    return property;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 int TClingTypeInfo::RefType() const
 {
    if (!IsValid()) {
@@ -226,7 +235,8 @@ int TClingTypeInfo::RefType() const
    return val;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 int TClingTypeInfo::Size() const
 {
    if (!IsValid()) {
@@ -249,7 +259,8 @@ int TClingTypeInfo::Size() const
    return static_cast<int>(Quantity);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 const char *TClingTypeInfo::StemName() const
 {
    if (!IsValid()) {
@@ -276,7 +287,7 @@ const char *TClingTypeInfo::StemName() const
       break;
    }
    // Note: This *must* be static because we are returning a pointer inside it.
-   static std::string buf;
+   TTHREAD_TLS_DECL( std::string, buf);
    buf.clear();
    clang::PrintingPolicy Policy(fInterp->getCI()->getASTContext().
                                 getPrintingPolicy());
@@ -284,17 +295,17 @@ const char *TClingTypeInfo::StemName() const
    return buf.c_str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return the normalized name of the type (i.e. fully qualified and without
+/// the non-opaque typedefs.
+
 const char *TClingTypeInfo::TrueName(const ROOT::TMetaUtils::TNormalizedCtxt &normCtxt) const
 {
-   // Return the normalized name of the type (i.e. fully qualified and without
-   // the non-opaque typedefs.
-
    if (!IsValid()) {
       return 0;
    }
    // Note: This *must* be static because we are returning a pointer inside it.
-   static std::string buf;
+   TTHREAD_TLS_DECL( std::string, buf);
    buf.clear();
 
    ROOT::TMetaUtils::GetNormalizedName(buf,fQualType, *fInterp, normCtxt);
@@ -302,12 +313,12 @@ const char *TClingTypeInfo::TrueName(const ROOT::TMetaUtils::TNormalizedCtxt &no
    return buf.c_str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return the normalized name of the type (i.e. fully qualified and without
+/// the non-opaque typedefs.
+
 std::string TClingTypeInfo::NormalizedName(const ROOT::TMetaUtils::TNormalizedCtxt &normCtxt) const
 {
-   // Return the normalized name of the type (i.e. fully qualified and without
-   // the non-opaque typedefs.
-
    if (!IsValid()) {
       return "";
    }

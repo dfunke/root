@@ -63,6 +63,9 @@ SPECTRUMLIBDEPM        = $(HISTLIB) $(MATRIXLIB)
 TMVALIBDEPM            = $(IOLIB) $(HISTLIB) $(MATRIXLIB) $(TREELIB) \
                          $(GRAFLIB) $(GPADLIB) $(TREEPLAYERLIB) $(MLPLIB) \
                          $(MINUITLIB) $(MATHCORELIB) $(XMLLIB)
+TMVAGUILIBDEPM         = $(IOLIB) $(HISTLIB) $(MATRIXLIB) $(TREELIB) \
+                         $(GUILIB) $(GRAFLIB) $(GPADLIB) $(TREEPLAYERLIB) $(TREEVIEWERLIB) $(MLPLIB) \
+                         $(MINUITLIB) $(MATHCORELIB) $(XMLLIB) $(TMVALIB)
 GENETICLIBDEPM         = $(IOLIB) $(HISTLIB) $(MATRIXLIB) $(TREELIB) \
                          $(GRAFLIB) $(GPADLIB) $(TREEPLAYERLIB) $(MLPLIB) \
                          $(MINUITLIB) $(MATHCORELIB) $(XMLLIB) $(TMVALIB)
@@ -139,6 +142,7 @@ MEMSTATLIBDEPM         = $(TREELIB) $(GPADLIB) $(GRAFLIB) $(HISTLIB) $(IOLIB)
 MEMSTATGUILIBDEPM      = $(MEMSTATLIB) $(TREELIB) $(GUILIB)
 RECLIBDEPM             = $(IOLIB) $(TREELIB) $(GUILIB) $(THREADLIB)
 FITSIOLIBDEPM          = $(HISTLIB) $(GPADLIB) $(GRAFLIB) $(MATRIXLIB)
+RLIBDEPM               = $(MATRIXLIB) $(GUILIB) $(THREADLIB)
 HTTPLIBDEPM            = $(THREADLIB) $(TREELIB) $(HISTLIB) $(GPADLIB) \
                          $(GRAFLIB) $(IOLIB) $(XMLLIB)
 
@@ -189,6 +193,7 @@ TABLELIBDEP            = $(TABLELIBDEPM)
 MLPLIBDEP              = $(MLPLIBDEPM)
 SPECTRUMLIBDEP         = $(SPECTRUMLIBDEPM)
 TMVALIBDEP             = $(TMVALIBDEPM)
+TMVAGUILIBDEP          = $(TMVAGUILIBDEPM)
 GENETICLIBDEP          = $(GENETICLIBDEPM)
 SPLOTLIBDEP            = $(SPLOTLIBDEPM)
 QUADPLIBDEP            = $(QUADPLIBDEPM)
@@ -244,6 +249,7 @@ MEMSTATLIBDEP          = $(MEMSTATLIBDEPM)
 MEMSTATGUILIBDEP       = $(MEMSTATGUILIBDEPM)
 RECLIBDEP              = $(RECLIBDEPM)
 FITSIOLIBDEP           = $(FITSIOLIBDEPM)
+RLIBDEP                = $(RLIBDEPM)
 HTTPLIBDEP             = $(HTTPLIBDEPM)
 
 ifeq ($(PLATFORM),win32)
@@ -323,8 +329,12 @@ MLPLIBEXTRA             = lib/libHist.lib lib/libMatrix.lib lib/libTree.lib \
 SPECTRUMLIBEXTRA        = lib/libHist.lib lib/libMatrix.lib
 TMVALIBEXTRA            = lib/libRIO.lib lib/libHist.lib lib/libMatrix.lib \
                           lib/libTree.lib lib/libGraf.lib lib/libGpad.lib \
-                          lib/libTreePlayer.lib lib/libMLP.lib \
+                          lib/libTreePlayer.lib  lib/libMLP.lib \
                           lib/libMinuit.lib lib/libMathCore.lib lib/libXMLIO.lib
+TMVAGUILIBEXTRA         = lib/libRIO.lib lib/libHist.lib lib/libMatrix.lib \
+                          lib/libTree.lib lib/libGui.lib lib/libGraf.lib lib/libGpad.lib \
+                          lib/libTreePlayer.lib lib/libTreeViewer.lib lib/libMLP.lib \
+                          lib/libMinuit.lib lib/libMathCore.lib lib/libXMLIO.lib lib/libTMVA.lib
 GENETICLIBEXTRA         = lib/libRIO.lib lib/libHist.lib lib/libMatrix.lib \
                           lib/libTree.lib lib/libGraf.lib lib/libGpad.lib \
                           lib/libTreePlayer.lib lib/libMLP.lib \
@@ -494,6 +504,8 @@ MLPLIBEXTRA             = -Llib -lHist -lMatrix -lTree -lGraf -lGpad \
 SPECTRUMLIBEXTRA        = -Llib -lHist -lMatrix
 TMVALIBEXTRA            = -Llib -lRIO -lHist -lMatrix -lTree -lGraf -lGpad \
                           -lTreePlayer -lMLP -lMinuit -lMathCore -lXMLIO
+TMVAGUILIBEXTRA         = -Llib -lRIO -lHist -lMatrix -lTree -lGraf -lGpad \
+                          -lGui -lTreePlayer -lTreeViewer -lMLP -lMinuit -lMathCore -lXMLIO -lTMVA
 GENETICLIBEXTRA         = -Llib -lRIO -lHist -lMatrix -lTree -lGraf -lGpad \
                           -lTreePlayer -lMLP -lMinuit -lMathCore -lXMLIO -lTMVA
 SPLOTLIBEXTRA           = -Llib -lMatrix -lHist -lTree -lTreePlayer -lGraf3d \
@@ -553,6 +565,7 @@ MEMSTATLIBEXTRA         = -Llib -lTree -lGpad -lGraf -lHist -lRIO
 MEMSTATGUILIBEXTRA      = -Llib -lMemStat -lTree -lGui
 RECLIBEXTRA             = -Llib -lGui -lRIO -lTree -lThread
 FITSIOLIBEXTRA          = -Llib -lHist -lGpad -lGraf -lMatrix
+RLIBEXTRA               = -Llib -lCore -lMatrix -lGui -lreadline -lThread
 HTTPLIBEXTRA            = -Llib -lThread -lTree -lHist -lGpad -lGraf -lRIO -lXMLIO
 ifeq ($(USEFASCGI), yes)
 HTTPLIBEXTRA           += -lfcgi

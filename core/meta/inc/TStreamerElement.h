@@ -59,16 +59,21 @@ protected:
 public:
 
    enum ESTLtype {
-      kSTL         = ROOT::kSTLany,
-      kSTLstring   = ROOT::kSTLstring,
-      kSTLvector   = ROOT::kSTLvector,
-      kSTLlist     = ROOT::kSTLlist,
-      kSTLdeque    = ROOT::kSTLdeque,
-      kSTLmap      = ROOT::kSTLmap,
-      kSTLmultimap = ROOT::kSTLmultimap,
-      kSTLset      = ROOT::kSTLset,
-      kSTLmultiset = ROOT::kSTLmultiset,
-      kSTLbitset   = ROOT::kSTLbitset
+      kSTL                  = ROOT::kSTLany,
+      kSTLstring            = ROOT::kSTLstring,
+      kSTLvector            = ROOT::kSTLvector,
+      kSTLlist              = ROOT::kSTLlist,
+      kSTLforwardlist       = ROOT::kSTLforwardlist,
+      kSTLdeque             = ROOT::kSTLdeque,
+      kSTLmap               = ROOT::kSTLmap,
+      kSTLmultimap          = ROOT::kSTLmultimap,
+      kSTLset               = ROOT::kSTLset,
+      kSTLmultiset          = ROOT::kSTLmultiset,
+      kSTLunorderedset      = ROOT::kSTLunorderedset,
+      kSTLunorderedmultiset = ROOT::kSTLunorderedmultiset,
+      kSTLunorderedmap      = ROOT::kSTLunorderedmap,
+      kSTLunorderedmultimap = ROOT::kSTLunorderedmultimap,
+      kSTLbitset            = ROOT::kSTLbitset
    };
    // TStreamerElement status bits
    enum {
@@ -112,6 +117,7 @@ public:
    virtual Bool_t   HasCounter() const {return kFALSE;}
    virtual Bool_t   IsOldFormat(const char *newTypeName);
    virtual Bool_t   IsBase() const;
+   virtual Bool_t   IsTransient() const;
    virtual void     ls(Option_t *option="") const;
    virtual void     SetArrayDim(Int_t dim);
    virtual void     SetMaxIndex(Int_t dim, Int_t max);
@@ -140,7 +146,8 @@ protected:
    UInt_t           &fBaseCheckSum;   //!checksum of the base class (used during memberwise streaming)
    TClass           *fBaseClass;      //!pointer to base class
    TClass           *fNewBaseClass;   //!pointer to new base class if renamed
-   ClassStreamerFunc_t   fStreamerFunc; //!Pointer to a wrapper around a custom streamer member function.
+   ClassStreamerFunc_t     fStreamerFunc;     //!Pointer to a wrapper around a custom streamer member function.
+   ClassConvStreamerFunc_t fConvStreamerFunc; //!Pointer to a wrapper around a custom convertion streamer member function.
    TVirtualStreamerInfo *fStreamerInfo; //!Pointer to the current StreamerInfo for the baset class.
    TString               fErrorMsg;     //!Error message in case of checksum/version mismatch.
 

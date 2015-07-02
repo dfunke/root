@@ -78,11 +78,11 @@
 
 ClassImp(TSelector)
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Default selector ctor.
+
 TSelector::TSelector() : TObject()
 {
-   // Default selector ctor.
-
    fStatus = 0;
    fAbort  = kContinue;
    fObject = 0;
@@ -91,25 +91,25 @@ TSelector::TSelector() : TObject()
    fOutput->SetOwner();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Selector destructor.
+
 TSelector::~TSelector()
 {
-   // Selector destructor.
-
    delete fOutput;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Abort processing. If what = kAbortProcess, the Process() loop will be
+/// aborted. If what = kAbortFile, the current file in a chain will be
+/// aborted and the processing will continue with the next file, if there
+/// is no next file then Process() will be aborted. Abort() can also  be
+/// called from Begin(), SlaveBegin(), Init() and Notify(). After abort
+/// the SlaveTerminate() and Terminate() are always called. The abort flag
+/// can be checked in these methods using GetAbort().
+
 void TSelector::Abort(const char *why, EAbort what)
 {
-   // Abort processing. If what = kAbortProcess, the Process() loop will be
-   // aborted. If what = kAbortFile, the current file in a chain will be
-   // aborted and the processing will continue with the next file, if there
-   // is no next file then Process() will be aborted. Abort() can also  be
-   // called from Begin(), SlaveBegin(), Init() and Notify(). After abort
-   // the SlaveTerminate() and Terminate() are always called. The abort flag
-   // can be checked in these methods using GetAbort().
-
    fAbort = what;
    TString mess = "Abort";
    if (fAbort == kAbortProcess)
@@ -120,22 +120,22 @@ void TSelector::Abort(const char *why, EAbort what)
    Info(mess, "%s", why);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// The code in filename is loaded (interpreted or compiled, see below),
+/// filename must contain a valid class implementation derived from TSelector.
+///
+/// If filename is of the form file.C, the file will be interpreted.
+/// If filename is of the form file.C++, the file file.C will be compiled
+/// and dynamically loaded. The corresponding binary file and shared
+/// library will be deleted at the end of the function.
+/// If filename is of the form file.C+, the file file.C will be compiled
+/// and dynamically loaded. At next call, if file.C is older than file.o
+/// and file.so, the file.C is not compiled, only file.so is loaded.
+///
+/// The static function returns a pointer to a TSelector object
+
 TSelector *TSelector::GetSelector(const char *filename)
 {
-   // The code in filename is loaded (interpreted or compiled, see below),
-   // filename must contain a valid class implementation derived from TSelector.
-   //
-   // If filename is of the form file.C, the file will be interpreted.
-   // If filename is of the form file.C++, the file file.C will be compiled
-   // and dynamically loaded. The corresponding binary file and shared
-   // library will be deleted at the end of the function.
-   // If filename is of the form file.C+, the file file.C will be compiled
-   // and dynamically loaded. At next call, if file.C is older than file.o
-   // and file.so, the file.C is not compiled, only file.so is loaded.
-   //
-   // The static function returns a pointer to a TSelector object
-
    // If the filename does not contain "." assume class is compiled in
    TString localname;
    Bool_t fromFile = kFALSE;
@@ -156,7 +156,6 @@ TSelector *TSelector::GetSelector(const char *filename)
    }
    TString aclicmode,args,io;
    localname = gSystem->SplitAclicMode(basename,aclicmode,args,io);
-   Bool_t isCompiled = !fromFile || aclicmode.Length()>0;
    if (localname.Last('.') != kNPOS)
       localname.Remove(localname.Last('.'));
 
@@ -168,56 +167,70 @@ TSelector *TSelector::GetSelector(const char *filename)
    if (!fromFile && gCling->AutoLoad(localname) != 1)
       autoloaderr = kTRUE;
 
-   ClassInfo_t *cl = gCling->ClassInfo_Factory(localname);
-   Bool_t ok = kFALSE;
-   Bool_t nameFound = kFALSE;
-   if (cl && gCling->ClassInfo_IsValid(cl)) {
-      if (localname == gCling->ClassInfo_FullName(cl)) {
-         nameFound = kTRUE;
-         if (gCling->ClassInfo_IsBase(cl,"TSelector")) ok = kTRUE;
-      }
-   }
-   if (!ok) {
-      if (fromFile) {
-         if (nameFound) {
+   TClass *selCl = TClass::GetClass(localname);
+   if (selCl) {
+      // We have all we need.
+      auto offset = selCl->GetBaseClassOffset(TSelector::Class());
+      if (offset == -1) {
+         // TSelector is not a based class.
+         if (fromFile)
             ::Error("TSelector::GetSelector",
                     "The class %s in file %s does not derive from TSelector.", localname.Data(), filename);
-         } else {
-            ::Error("TSelector::GetSelector",
-                    "The file %s does not define a class named %s.", filename, localname.Data());
-         }
-      } else {
-         if (autoloaderr)
+         else if (autoloaderr)
             ::Error("TSelector::GetSelector", "class %s could not be loaded", filename);
          else
             ::Error("TSelector::GetSelector",
                     "class %s does not exist or does not derive from TSelector", filename);
+         return 0;
       }
-      gCling->ClassInfo_Delete(cl);
-      return 0;
-   }
+      char *result = (char*)selCl->New();
+      // By adding offset, we support the case where TSelector is not the
+      // "left-most" base class (i.e. offset != 0)
+      return (TSelector*)(result+offset);
 
-   // we can now create an instance of the class
-   TSelector *selector = (TSelector*)gCling->ClassInfo_New(cl);
-   if (!selector || isCompiled) {
+   } else {
+      ClassInfo_t *cl = gCling->ClassInfo_Factory(localname);
+      Bool_t ok = kFALSE;
+      Bool_t nameFound = kFALSE;
+      if (cl && gCling->ClassInfo_IsValid(cl)) {
+         if (localname == gCling->ClassInfo_FullName(cl)) {
+            nameFound = kTRUE;
+            if (gCling->ClassInfo_IsBase(cl,"TSelector")) ok = kTRUE;
+         }
+      }
+      if (!ok) {
+         if (fromFile) {
+            if (nameFound) {
+               ::Error("TSelector::GetSelector",
+                       "The class %s in file %s does not derive from TSelector.", localname.Data(), filename);
+            } else {
+               ::Error("TSelector::GetSelector",
+                       "The file %s does not define a class named %s.", filename, localname.Data());
+            }
+         } else {
+            if (autoloaderr)
+               ::Error("TSelector::GetSelector", "class %s could not be loaded", filename);
+            else
+               ::Error("TSelector::GetSelector",
+                       "class %s does not exist or does not derive from TSelector", filename);
+         }
+         gCling->ClassInfo_Delete(cl);
+         return 0;
+      }
+
+      // we can now create an instance of the class
+      TSelector *selector = (TSelector*)gCling->ClassInfo_New(cl);
       gCling->ClassInfo_Delete(cl);
       return selector;
    }
-
-   //interpreted selector: cannot be used as such
-   //create a fake selector
-   TSelectorCint *select = new TSelectorCint();
-   select->Build(selector, cl);
-   gCling->ClassInfo_Delete(cl);
-   return select;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Find out if this is a standard selection used for Draw actions
+/// (either TSelectorDraw, TProofDraw or deriving from them).
+
 Bool_t TSelector::IsStandardDraw(const char *selec)
 {
-   // Find out if this is a standard selection used for Draw actions
-   // (either TSelectorDraw, TProofDraw or deriving from them).
-
    // Make sure we have a name
    if (!selec) {
       ::Info("TSelector::IsStandardDraw",

@@ -191,7 +191,7 @@ macro(REFLEX_GENERATE_DICTIONARY dictionary)
 
   add_custom_command(
     OUTPUT ${gensrcdict} ${rootmapname}
-    COMMAND ${ROOT_genreflex_cmd}
+    COMMAND ${ROOT_genreflex_CMD}
     ARGS ${headerfiles} -o ${gensrcdict} ${rootmapopts} --select=${selectionfile}
          --gccxmlpath=${GCCXML_home}/bin ${ARG_OPTIONS} ${include_dirs} ${definitions}
     DEPENDS ${headerfiles} ${selectionfile})
@@ -245,7 +245,7 @@ function(ROOT_GENERATE_DICTIONARY dictionary)
   if(CMAKE_PROJECT_NAME STREQUAL ROOT)
     set(includedirs -I${CMAKE_SOURCE_DIR}
                     -I${CMAKE_BINARY_DIR}/include)
-  else()
+  elseif(EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/inc)
     set(includedirs -I${CMAKE_CURRENT_SOURCE_DIR}/inc)
   endif()
   foreach( d ${incdirs})
@@ -413,6 +413,11 @@ function(ROOT_LINKER_LIBRARY library)
                        ARGS -o ${library}.def ${libprefix}${library} ${lib_objs}
                        DEPENDS bindexplib )
   else()
+    #---Need to add a dummy source file if all sources are OBJECT libraries (Xcode, ...)
+    if(NOT lib_srcs MATCHES "(^|[;])[^$][^<]")
+      add_custom_command(OUTPUT dummy.cxx COMMAND ${CMAKE_COMMAND} -E touch dummy.cxx)
+      set(lib_srcs ${lib_srcs} dummy.cxx)
+    endif()
     add_library( ${library} ${_all} ${ARG_TYPE} ${lib_srcs})
     if(ARG_TYPE STREQUAL SHARED)
       set_target_properties(${library} PROPERTIES  ${ROOT_LIBRARY_PROPERTIES} )
@@ -472,18 +477,23 @@ function(ROOT_OBJECT_LIBRARY library)
   #    does not get expanded when used in custom command dependencies
   get_target_property(sources ${library} SOURCES)
   foreach(s ${sources})
-    if(IS_ABSOLUTE ${s})
-      if(${s} MATCHES ${CMAKE_CURRENT_SOURCE_DIR})
-        string(REPLACE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir src ${s})
-      elseif(${s} MATCHES ${CMAKE_CURRENT_BINARY_DIR})
-        string(REPLACE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir src ${s})
-      else()
-        #message(WARNING "Unknown location of source ${s} for object library ${library}")
-      endif()
+    if(CMAKE_GENERATOR MATCHES Xcode)
+      get_filename_component(name ${s} NAME_WE)
+      set(obj ${CMAKE_CURRENT_BINARY_DIR}/${CMAKE_PROJECT_NAME}.build/${CMAKE_CFG_INTDIR}/${library}.build/Objects-normal/x86_64/${name}${CMAKE_CXX_OUTPUT_EXTENSION})
     else()
-      set(src ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir/${s})
+      if(IS_ABSOLUTE ${s})
+        if(${s} MATCHES ${CMAKE_CURRENT_SOURCE_DIR})
+          string(REPLACE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir src ${s})
+        elseif(${s} MATCHES ${CMAKE_CURRENT_BINARY_DIR})
+          string(REPLACE ${CMAKE_CURRENT_BINARY_DIR} ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir src ${s})
+        else()
+          #message(WARNING "Unknown location of source ${s} for object library ${library}")
+        endif()
+      else()
+        set(src ${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/${library}.dir/${s})
+      endif()
+      set(obj ${src}${CMAKE_CXX_OUTPUT_EXTENSION})
     endif()
-    set(obj ${src}${CMAKE_CXX_OUTPUT_EXTENSION})
     set_property(TARGET ${library} APPEND PROPERTY OBJECTS ${obj})
   endforeach()
 endfunction()
@@ -667,7 +677,7 @@ endmacro()
 #----------------------------------------------------------------------------
 # function ROOT_ADD_TEST( <name> COMMAND cmd [arg1... ]
 #                        [PRECMD cmd [arg1...]] [POSTCMD cmd [arg1...]]
-#                        [OUTPUT outfile] [ERROR errfile]
+#                        [OUTPUT outfile] [ERROR errfile] [INPUT infile]
 #                        [ENVIRONMENT var1=val1 var2=val2 ...
 #                        [DEPENDS test1 ...]
 #                        [TIMEOUT seconds]
@@ -680,7 +690,7 @@ endmacro()
 #
 function(ROOT_ADD_TEST test)
   CMAKE_PARSE_ARGUMENTS(ARG "DEBUG;WILLFAIL;CHECKOUT;CHECKERR"
-                             "TIMEOUT;BUILD;OUTPUT;ERROR;SOURCE_DIR;BINARY_DIR;WORKING_DIR;PROJECT;PASSRC"
+                            "TIMEOUT;BUILD;INPUT;OUTPUT;ERROR;SOURCE_DIR;BINARY_DIR;WORKING_DIR;PROJECT;PASSRC"
                              "COMMAND;COPY_TO_BUILDDIR;DIFFCMD;OUTCNV;OUTCNVCMD;PRECMD;POSTCMD;ENVIRONMENT;COMPILEMACROS;DEPENDS;PASSREGEX;OUTREF;ERRREF;FAILREGEX;LABELS"
                             ${ARGN})
 
@@ -726,7 +736,11 @@ function(ROOT_ADD_TEST test)
     set(_command ${_command} -DPOST=${_post})
   endif()
 
-  #- Handle OUTPUT, ERROR, DEBUG arguments
+  #- Handle INPUT, OUTPUT, ERROR, DEBUG arguments
+  if(ARG_INPUT)
+    set(_command ${_command} -DIN=${ARG_INPUT})
+  endif()
+
   if(ARG_OUTPUT)
     set(_command ${_command} -DOUT=${ARG_OUTPUT})
   endif()

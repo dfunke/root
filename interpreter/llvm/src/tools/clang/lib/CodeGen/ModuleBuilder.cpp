@@ -32,7 +32,7 @@ namespace clang {
     DiagnosticsEngine &Diags;
     std::unique_ptr<const llvm::DataLayout> TD;
     ASTContext *Ctx;
-    const CodeGenOptions CodeGenOpts;  // Intentionally copied in.
+    CodeGenOptions CodeGenOpts;  // Intentionally copied in.
 
     unsigned HandlingTopLevelDecls;
     struct HandlingTopLevelDeclRAII {
@@ -89,15 +89,22 @@ namespace clang {
     }
 
     llvm::Module *ReleaseModule() override {
+      // Remove pending etc decls in case of error; the asserts in StartModule()
+      // will rightfully be confused otherwise, as none of the decls were
+      // emitted.
+      if (Diags.hasErrorOccurred())
+        Builder->clear();
       return M.release();
     }
 
     llvm::Module *StartModule(const std::string& ModuleName,
-                              llvm::LLVMContext& C) override {
+                              llvm::LLVMContext& C,
+                              const CodeGenOptions& CGO) override {
       assert(!M && "Replacing existing Module?");
 
       std::unique_ptr<CodeGen::CodeGenModule> OldBuilder;
       OldBuilder.swap(Builder);
+      CodeGenOpts = CGO;
       M.reset(new llvm::Module(ModuleName, C));
       Initialize(*Ctx);
 

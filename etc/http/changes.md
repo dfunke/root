@@ -1,9 +1,64 @@
-# JSROOT changelog {#jsroot_changes}
+# JSROOT changelog
 
-This is further development of JSRootIO project of Bertrand Bellenot. 
-Many old problems and errors are fixed, new functions are provided.  
+## Changes in 3.6
+1. Try to provide workaround for websites where require.js already loaded.
+   This makes problem by direct loading of jquery and jquery-ui 
+2. Provide workaround for older version of jquery-ui 
+3. Prompt for input of command arguments
+4. After command execution one could automatically reload hierarchy (_hreload property) or
+   update view of displayed object (_update_item property)    
+5. Use HiearchyPainter for implementing draw.htm. This let us handle
+   all different kinds of extra attributes in central place 
+6. Fix problem in tabs layout - new tab should be add to direct child
+7. When drawing several tabs, activate frame before drawing - only then
+   real frame size will be set
+8. Fix problem with GetBBox - it only can be used for visible elements in mozilla.    
+9. Support drawing of fit parameters in stat box, use (as far as possible) stat and
+   fit format for statistic display 
+10.Implement 'g' formatting kind for stat box output - one need to checks 
+   significant digits when producing output.  
+11.Support new draw options for TGraph: 'C', 'B1', '0', '2', '3', '4', '[]'
+12.Primary support for STL containers in IO part. Allows to read ROOT6 TF1.
+13.Full support of TGraphBentErrors
+14.Support objects drawing from JSON files in default user interface, including
+   monitoring. One could open file from link like: 
+      https://root.cern.ch/js/dev/?json=demo/canvas_tf1.json 
+15.Introduce JSROOT.FFormat function to convert numeric values into string according
+   format like 6.4g or 5.7e. Used for statistic display.
 
-## Changes in v 3.3
+
+## Changes in 3.5
+1. Fix error in vertical text alignment
+2. Many improvements in TPaletteAxis drawing - draw label, avoid too large ticks.
+3. Fix error with col drawing - bin with maximum value got wrong color  
+4. Test for existing jquery.js, jquery-ui.js and d3.js libraries, reuse when provided 
+5. Fix several I/O problems; now one could read files, produced in Geant4
+6. Implement 'e2' drawing option for TH1 class, 
+   use by default 'e' option when TH1 has non-empty fSumw2
+7. Reuse statistic from histogram itself, when no axis selection done 
+8. Support log/lin z scale for color drawing
+9. Implement interactive z-scale selection on TPaletteAxis 
+10. Allow to redraw item with other draw options (before one should clear drawings)
+11. Several improvements in THttpServer user interface - repair hierarchy reload,
+    hide unsupported context menu entries, status line update 
+
+
+## Changes in 3.4
+1. Support usage of minimized versions of .js and .css files.
+   Minimized scripts used by default on web servers.
+2. Implement JSROOT.extend instead of jQuery.extend, reduce
+   usage of jquery.js in core JSROOT classes
+3. Implement main graphics without jquery at all,
+   such mode used in `nobrowser` mode.
+4. Provide optional latex drawing with MathJax SVG.
+   TMathText always drawn with MathJax,
+   other classes require `mathjax` option in URL
+5. Improve drawing of different text classes, correctly handle
+   their alignment and scaling, special handling for IE
+6. Fix error with time axes - time offset was not correctly interpreted
+
+
+## Changes in 3.3
 1. Use d3.time.scale for display of time scales
 2. Within JSRootCore.js script URL one could specify JSROOT
    functionality to be loaded: '2d', '3d', 'io', 'load', 'onload'.
@@ -21,16 +76,16 @@ Many old problems and errors are fixed, new functions are provided.
     similar items from different files. Could be used in URL like:
       `...&files=[file1.root,file2.root]&items=[file1.root/hpx, file2.root/_same_]`
       `...&files=[file1.root,file2.root]&item=file1.root/hpx+file2.root/_same_`
-    Main limitation - file names should have similar length.   
+    Main limitation - file names should have similar length.
 11. When 'autozoom' specified in draw options, histogram zoomed into
-    non-empty content. Same command available via context menu. 
-12. Item of 'Text' kind can be created. It is displayed as 
+    non-empty content. Same command available via context menu.
+12. Item of 'Text' kind can be created. It is displayed as
     plain text in the browser. If property 'mathjax' specified,
     MathJax.js library will be loaded and used for rendering.
     See httpcontrol.C macro for example.
-13. When using foreignObject, provide workaround for absolute positioning 
+13. When using foreignObject, provide workaround for absolute positioning
     problem in Chrome/Safari, see <http://bit.ly/1wjqCQ9>
-   
+
 
 ## Changes in 3.2
 1. Support JSON objects embedding in html pages, produced by THttpServer
@@ -50,13 +105,13 @@ Many old problems and errors are fixed, new functions are provided.
 2. Implement JSROOT.Create() method to create supported
    in JavaScript ROOT classes like TH1 or TGraph
 3. Fix problem with JSROOT.draw in HTML element with zero width (display:none)
-4. Provide possibility to load user scripts with JSROOT.BuildSimpleGUI 
+4. Provide possibility to load user scripts with JSROOT.BuildSimpleGUI
    and JSROOT.AssertPrerequisites, also with main index.htm
 5. Support of TCutG drawing
 6. Implement hierarchy display (former dtree) with jQuery
 7. Fix several problems in drawing optimization
-8. Implement dragging objects from hierarchy browser into existing canvas 
-   to superimpose several objects 
+8. Implement dragging objects from hierarchy browser into existing canvas
+   to superimpose several objects
 9. Implement col2 and col3 draw options, using html5 canvas
 10. Support 'p' and 'p0' draw options for TH1 class
 

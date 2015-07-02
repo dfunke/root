@@ -189,6 +189,9 @@
 #   if defined(R__ppc64)
 #      define R__B64
 #   endif
+#   if defined(_LITTLE_ENDIAN)
+#      define R__BYTESWAP
+#   endif
 #endif
 
 #if defined(linux) && defined(__aarch64__)
@@ -366,7 +369,9 @@
 #   define R__VISUAL_CPLUSPLUS
 #   define NEED_STRING
 #   define NEED_STRCASECMP
-#   define NEED_SNPRINTF
+#   if _MSC_VER < 1900
+#     define NEED_SNPRINTF
+#   endif
 #   define ANSICPP
 #   define R__VECNEWDELETE    /* supports overloading of new[] and delete[] */
 #   define R__PLACEMENTDELETE /* supports overloading placement delete */
@@ -377,6 +382,9 @@
 #   endif
 #   if _MSC_VER < 1310
 #      define R__NO_CLASS_TEMPLATE_SPECIALIZATION
+#   endif
+#   if _MSC_VER <= 1800
+#      define R__NO_ATOMIC_FUNCTION_POINTER
 #   endif
 #endif
 

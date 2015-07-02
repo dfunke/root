@@ -1,11 +1,5 @@
 # Doxyfile 1.8.6
 
-# The PROJECT_NUMBER tag can be used to enter a project or revision number. This
-# could be handy for archiving the generated documentation or if some version
-# control system is used.
-
-PROJECT_NUMBER         = 6.03/03
-
 # This file describes the settings to be used by the documentation system
 # doxygen (www.doxygen.org) for a project.
 #
@@ -22,6 +16,12 @@ PROJECT_NUMBER         = 6.03/03
 #---------------------------------------------------------------------------
 # Project related configuration options
 #---------------------------------------------------------------------------
+
+# The PROJECT_NUMBER tag can be used to enter a project or revision number. This
+# could be handy for archiving the generated documentation or if some version
+# control system is used.
+
+PROJECT_NUMBER         = $(DOXYGEN_ROOT_VERSION)
 
 # This tag specifies the encoding used for all characters in the config file
 # that follow. The default is UTF-8 which is also the encoding used for all text
@@ -58,7 +58,7 @@ PROJECT_LOGO           = ./rootlogo.gif
 # entered, it will be relative to the location where doxygen was started. If
 # left blank the current directory will be used.
 
-OUTPUT_DIRECTORY       = /tmp/doxygen/rootdoc
+OUTPUT_DIRECTORY       = $(DOXYGEN_OUTPUT_DIRECTORY)
 
 # If the CREATE_SUBDIRS tag is set to YES, then doxygen will create 4096 sub-
 # directories (in 2 levels) under the output directory of each output format and
@@ -308,7 +308,7 @@ AUTOLINK_SUPPORT       = YES
 # diagrams that involve STL classes more complete and accurate.
 # The default value is: NO.
 
-BUILTIN_STL_SUPPORT    = NO
+BUILTIN_STL_SUPPORT    = YES
 
 # If you use Microsoft's C++/CLI language, you should set this option to YES to
 # enable parsing support.
@@ -408,7 +408,7 @@ LOOKUP_CACHE_SIZE      = 0
 # normally produced when WARNINGS is set to YES.
 # The default value is: NO.
 
-EXTRACT_ALL            = NO
+EXTRACT_ALL            = YES
 
 # If the EXTRACT_PRIVATE tag is set to YES all private members of a class will
 # be included in the documentation.
@@ -434,7 +434,7 @@ EXTRACT_STATIC         = NO
 # for Java sources.
 # The default value is: YES.
 
-EXTRACT_LOCAL_CLASSES  = YES
+EXTRACT_LOCAL_CLASSES  = NO
 
 # This flag is only useful for Objective-C code. When set to YES local methods,
 # which are defined in the implementation section but not in the interface are
@@ -753,8 +753,56 @@ WARN_LOGFILE           =
 # spaces.
 # Note: If this tag is empty the current directory is searched.
 
-INPUT                  = ../../hist/histpainter \
-                         ../../graf2d/graf
+INPUT                  = ../../core/base/ \
+                         ../../core/cont/ \
+                         ../../core/meta/ \
+                         ../../core/metautils/ \
+                         ../../core/rint/ \
+                         ../../core/thread/ \
+                         ../../core/unix/ \
+                         ../../geom/gdml/ \
+                         ../../geom/goem \
+                         ../../geom/geombuilder/ \
+                         ../../geom/geompainter/ \
+                         ../../graf2d/asimage/ \
+                         ../../graf2d/fitsio/ \
+                         ../../graf2d/gpad/ \
+                         ../../graf2d/graf/ \
+                         ../../graf2d/gviz/ \
+                         ../../graf2d/postscript/ \
+                         ../../graf3d/eve/ \
+                         ../../graf3d/g3d/ \
+                         ../../graf3d/gl/ \
+                         ../../graf3d/gviz3d/ \
+                         ../../hist/hist/ \
+                         ../../hist/histpainter/ \
+                         ../../hist/hbook/ \
+                         ../../hist/spectrum/ \
+                         ../../hist/spectrumpainter/ \
+                         ../../io/io/ \
+                         ../../io/sql/ \
+                         ../../io/xml/ \
+                         ../../io/xmlparser/ \
+                         ../../math/ \
+                         ../../misc/memstat/ \
+                         ../../montecarlo/eg/ \
+                         ../../montecarlo/pythia8/ \
+                         ../../montecarlo/vmc/ \
+                         ../../net/auth/ \
+                         ../../net/http/ \
+                         ../../net/krb5auth/ \
+                         ../../net/net/ \
+                         ../../net/netx/ \
+                         ../../net/netxng/ \
+                         ../../proof \
+                         ../../tmva \
+                         ../../roofit \
+                         ../../tree \
+                         ../../sql/ \
+                         ../../gui/gui/ \
+                         ../../gui/fitpanel/
+#                         ../../gui/ged/ \
+
 
 # This tag can be used to specify the character encoding of the source files
 # that doxygen parses. Internally doxygen uses the UTF-8 encoding. Doxygen uses
@@ -794,7 +842,6 @@ FILE_PATTERNS          = *.c \
                          *.hpp \
                          *.h++ \
                          *.cs \
-                         *.d \
                          *.php \
                          *.php4 \
                          *.php5 \
@@ -846,7 +893,8 @@ EXCLUDE_SYMLINKS       = NO
 # Note that the wildcards are matched against the file with absolute path, so to
 # exclude all test directories for example use the pattern */test/*
 
-EXCLUDE_PATTERNS       =
+EXCLUDE_PATTERNS       =  */G__* \
+                          */src/unuran-*
 
 # The EXCLUDE_SYMBOLS tag can be used to specify one or more symbol names
 # (namespaces, classes, functions, etc.) that should be excluded from the
@@ -863,7 +911,7 @@ EXCLUDE_SYMBOLS        =
 # that contain example code fragments that are included (see the \include
 # command).
 
-EXAMPLE_PATH           = /tmp/doxygen/rootdoc/macros
+EXAMPLE_PATH           = $(DOXYGEN_EXAMPLE_PATH)
 
 # If the value of the EXAMPLE_PATH tag contains directories, you can use the
 # EXAMPLE_PATTERNS tag to specify one or more wildcard pattern (like *.cpp and
@@ -883,7 +931,7 @@ EXAMPLE_RECURSIVE      = NO
 # that contain images that are to be included in the documentation (see the
 # \image command).
 
-IMAGE_PATH             = /tmp/doxygen/rootdoc/images
+IMAGE_PATH             =
 
 # The INPUT_FILTER tag can be used to specify a program that doxygen should
 # invoke to filter for each input file. Doxygen will invoke the filter program
@@ -916,7 +964,7 @@ FILTER_PATTERNS        =
 # producing the source files to browse (i.e. when SOURCE_BROWSER is set to YES).
 # The default value is: NO.
 
-FILTER_SOURCE_FILES    = YES
+FILTER_SOURCE_FILES    = NO
 
 # The FILTER_SOURCE_PATTERNS tag can be used to specify source filters per file
 # pattern. A pattern will override the setting for FILTER_PATTERN (if any) and
@@ -1981,7 +2029,7 @@ EXPAND_ONLY_PREDEF     = NO
 # The default value is: YES.
 # This tag requires that the tag ENABLE_PREPROCESSING is set to YES.
 
-SEARCH_INCLUDES        = YES
+SEARCH_INCLUDES        = NO
 
 # The INCLUDE_PATH tag can be used to specify one or more directories that
 # contain include files that are not input files but should be processed by the

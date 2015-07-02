@@ -7,18 +7,20 @@
 # Copyright (c) 2014 Rene Brun and Fons Rademakers
 # Author: Axel Naumann <axel@cern.ch>, 2014-10-16
 
+# Usage: $0 <root-srcdir> "module0 module1 ... moduleN" header0 header1 ... headerN -- cxxflag0 cxxflag1 ...
+
 srcdir=$1
 shift
 modules=$1
 shift
 
-# Remove leftover files from old versions of this script.
-rm -f include/allHeaders.h include/allHeaders.h.pch include/allLinkDef.h all.h cppflags.txt include/allLinkDef.h etc/allDict.cxx etc/allDict.cxx.h
-
 outdir=etc/dictpch
 allheaders=$outdir/allHeaders.h
 alllinkdefs=$outdir/allLinkDefs.h
 cppflags=$outdir/allCppflags.txt
+
+# Remove leftover files from old versions of this script.
+rm -f include/allHeaders.h include/allHeaders.h.pch include/allLinkDef.h all.h cppflags.txt include/allLinkDef.h etc/allDict.cxx etc/allDict.cxx.h $cppflags.tmp $allheaders $alllinkdefs $cppflags
 
 mkdir -p $outdir
 rm -f $allheaders $alllinkdefs
@@ -44,17 +46,32 @@ echo '#endif' >> $allheaders
 # treat this deprecated headers in a special way
 stlDeprecatedHeaders="strstream"
 echo "// STL Deprecated headers" >> $allheaders
+echo "#define _BACKWARD_BACKWARD_WARNING_H" >> $allheaders
 echo '#pragma clang diagnostic push' >> $allheaders
 echo '#pragma GCC diagnostic ignored "-Wdeprecated"' >> $allheaders
-for stlHeader in stlDeprecatedHeaders; do
+for stlHeader in $stlDeprecatedHeaders; do
     echo '#if __has_include("'$stlHeader'")' >> $allheaders
     echo '#include <'$stlHeader'>' >> $allheaders
     echo '#endif' >> $allheaders
 done
 echo '#pragma clang diagnostic pop' >> $allheaders
+echo '#undef _BACKWARD_BACKWARD_WARNING_H' >> $allheaders
+
+while ! [ "x$1" = "x" -o "x$1" = "x--" ]; do
+    echo '#include "'$1'"' >> $allheaders
+    shift
+done
+
+if [ "x$1" = "x--" ]; then
+    shift
+fi
 
 while ! [ "x$1" = "x" ]; do
-    echo '#include "'$1'"' >> $allheaders
+    case $1 in
+        -Wno*) echo "$1" >> $cppflags.tmp ;;
+        -W*) ;;
+        *) echo "$1" >> $cppflags.tmp ;;
+    esac
     shift
 done
 
@@ -65,7 +82,7 @@ for dict in `find $modules -name 'G__*.cxx' 2> /dev/null | grep -v /G__Cling.cxx
     case $dirname in
         graf2d/qt | math/fftw | math/foam | math/fumili | math/mlp | math/quadp | math/splot | math/unuran | math/vc | math/vdt) continue;;
 
-        interpreter/* | core/* | io/io | net/net | math/* | hist/* | tree/* | graf2d/* | graf3d/gl | gui/gui | gui/fitpanel | rootx | bindings/pyroot | roofit/* | tmva | main) ;;
+        interpreter/* | core/* | io/io | net/net | math/* | hist/* | tree/* | graf2d/* | graf3d/ftgl | graf3d/g3d | graf3d/gl | gui/gui | gui/fitpanel | rootx | bindings/pyroot | roofit/* | tmva/* | main) ;;
 
         *) continue;;
     esac
@@ -120,3 +137,4 @@ cat $cppflags.tmp | sort | uniq | grep -v $srcdir | grep -v `pwd` > $cppflags
 echo
 echo Generating PCH for ${selmodules}
 echo
+

@@ -210,7 +210,11 @@ option(LLVM_ENABLE_THREADS "Use threads if available." ON)
 
 option(LLVM_ENABLE_ZLIB "Use zlib for compression/decompression if available." ON)
 
-if(${LLVM_TARGETS_TO_BUILD} STREQUAL "all")
+if(POLICY CMP0054)
+  cmake_policy(SET CMP0054 NEW)
+endif()
+
+if("${LLVM_TARGETS_TO_BUILD}" STREQUAL "all")
   set( LLVM_TARGETS_TO_BUILD ${LLVM_ALL_TARGETS} )
 endif()
 
@@ -530,6 +534,11 @@ endif( ${CMAKE_SYSTEM_NAME} MATCHES FreeBSD )
 if( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
    SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -include llvm/Support/Solaris.h")
 endif( ${CMAKE_SYSTEM_NAME} MATCHES SunOS )
+
+
+if( ${CMAKE_SYSTEM_NAME} MATCHES Darwin AND ${CMAKE_CXX_COMPILER_ID} MATCHES GNU )
+   SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
+endif( ${CMAKE_SYSTEM_NAME} MATCHES Darwin AND ${CMAKE_CXX_COMPILER_ID} MATCHES GNU )
 
 # Make sure we don't get -rdynamic in every binary. For those that need it,
 # use set_target_properties(target PROPERTIES ENABLE_EXPORTS 1)

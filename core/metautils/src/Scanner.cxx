@@ -18,6 +18,7 @@
 #include "clang/Frontend/CompilerInstance.h"
 
 #include "cling/Interpreter/Interpreter.h"
+#include "llvm/Support/Path.h"
 
 #include "TClassEdit.h"
 
@@ -86,7 +87,10 @@ int RScanner::fgAnonymousEnumCounter  = 0;
 std::map <clang::Decl*, std::string> RScanner::fgAnonymousClassMap;
 std::map <clang::Decl*, std::string> RScanner::fgAnonymousEnumMap;
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Regular constructor setting up the scanner to search for entities
+/// matching the 'rules'.
+
 RScanner::RScanner (SelectionRules &rules,
                     EScanType stype,
                     const cling::Interpreter &interpret,
@@ -101,9 +105,6 @@ RScanner::RScanner (SelectionRules &rules,
   fScanType(stype),
   fFirstPass(true)
 {
-   // Regular constructor setting up the scanner to search for entities
-   // matching the 'rules'.
-
    // Build the cache for all selection rules
    fSelectionRules.FillCache();
 
@@ -116,37 +117,43 @@ RScanner::RScanner (SelectionRules &rules,
    fLastDecl = 0;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 RScanner::~RScanner ()
 {
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline void* ToDeclProp(clang::Decl* item)
 {
    /* conversion and type check used by AddProperty */
    return item;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline size_t APIntToSize(const llvm::APInt& num)
 {
    return *num.getRawData();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline long APIntToLong(const llvm::APInt& num)
 {
    return *num.getRawData();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline std::string APIntToStr(const llvm::APInt& num)
 {
    return num.toString(10, true);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline std::string IntToStr(int num)
 {
    std::string txt = "";
@@ -154,7 +161,8 @@ inline std::string IntToStr(int num)
    return txt;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline std::string IntToStd(int num)
 {
    std::ostringstream stream;
@@ -162,7 +170,8 @@ inline std::string IntToStd(int num)
    return stream.str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline std::string Message(const std::string &msg, const std::string &location)
 {
    std::string loc = location;
@@ -181,7 +190,8 @@ inline std::string Message(const std::string &msg, const std::string &location)
       return loc + " " + msg;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::ShowInfo(const std::string &msg, const std::string &location) const
 {
    const std::string message = Message(msg, location);
@@ -192,7 +202,8 @@ void RScanner::ShowInfo(const std::string &msg, const std::string &location) con
 #endif
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::ShowWarning(const std::string &msg, const std::string &location) const
 {
 #ifdef SHOW_WARNINGS
@@ -205,7 +216,8 @@ void RScanner::ShowWarning(const std::string &msg, const std::string &location) 
 #endif
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::ShowError(const std::string &msg, const std::string &location) const
 {
    const std::string message = Message(msg, location);
@@ -216,7 +228,8 @@ void RScanner::ShowError(const std::string &msg, const std::string &location) co
 #endif
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::ShowTemplateInfo(const std::string &msg, const std::string &location) const
 {
 #ifdef SHOW_TEMPLATE_INFO
@@ -227,7 +240,8 @@ void RScanner::ShowTemplateInfo(const std::string &msg, const std::string &locat
 #endif
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetSrcLocation(clang::SourceLocation L) const
 {
    std::string location = "";
@@ -236,7 +250,8 @@ std::string RScanner::GetSrcLocation(clang::SourceLocation L) const
    return stream.str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetLocation(clang::Decl* D) const
 {
    if (D == NULL)
@@ -252,7 +267,8 @@ std::string RScanner::GetLocation(clang::Decl* D) const
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetName(clang::Decl* D) const
 {
    std::string name = "";
@@ -265,7 +281,8 @@ std::string RScanner::GetName(clang::Decl* D) const
    return name;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 inline std::string AddSpace(const std::string &txt)
 {
    if (txt == "")
@@ -274,7 +291,8 @@ inline std::string AddSpace(const std::string &txt)
       return txt + " ";
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::DeclInfo(clang::Decl* D) const
 {
    std::string location = GetLocation(D);
@@ -283,47 +301,51 @@ void RScanner::DeclInfo(clang::Decl* D) const
    ShowInfo("Scan: " + kind + " declaration " + name, location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// unknown - this kind of declaration was not known to programmer
+
 void RScanner::UnknownDecl(clang::Decl* D, const std::string &txt) const
 {
-   // unknown - this kind of declaration was not known to programmer
    std::string location = GetLocation(D);
    std::string kind = D->getDeclKindName();
    std::string name = GetName(D);
    ShowWarning("Unknown " + AddSpace(txt) + kind + " declaration " + name, location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// unexpected - this kind of declaration is unexpected (in concrete place)
+
 void RScanner::UnexpectedDecl(clang::Decl* D, const std::string &txt) const
 {
-   // unexpected - this kind of declaration is unexpected (in concrete place)
    std::string location = GetLocation(D);
    std::string kind = D->getDeclKindName();
    std::string name = GetName(D);
    ShowWarning("Unexpected " + kind + " declaration " + name, location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// unsupported - this kind of declaration is probably not used (in current version of C++)
+
 void RScanner::UnsupportedDecl(clang::Decl* D, const std::string &txt) const
 {
-   // unsupported - this kind of declaration is probably not used (in current version of C++)
    std::string location = GetLocation(D);
    std::string kind = D->getDeclKindName();
    std::string name = GetName(D);
    ShowWarning("Unsupported " + AddSpace(txt) + kind + " declaration " + name, location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// unimportant - this kind of declaration is not stored into reflex
+
 void RScanner::UnimportantDecl(clang::Decl* D, const std::string &txt) const
 {
-   // unimportant - this kind of declaration is not stored into reflex
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// information about item, that should be implemented
+
 void RScanner::UnimplementedDecl(clang::Decl* D, const std::string &txt)
 {
-   // information about item, that should be implemented
-
    clang::Decl::Kind k = D->getKind();
 
    bool show = true;
@@ -355,7 +377,8 @@ void RScanner::UnimplementedDecl(clang::Decl* D, const std::string &txt)
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::UnknownType(clang::QualType qual_type) const
 {
    std::string location = GetLocation(fLastDecl);
@@ -363,7 +386,8 @@ void RScanner::UnknownType(clang::QualType qual_type) const
    ShowWarning("Unknown " + kind + " type " + qual_type.getAsString(), location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::UnsupportedType(clang::QualType qual_type) const
 {
    std::string location = GetLocation(fLastDecl);
@@ -371,13 +395,15 @@ void RScanner::UnsupportedType(clang::QualType qual_type) const
    ShowWarning("Unsupported " + kind + " type " + qual_type.getAsString(), location);
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// unimportant - this kind of declaration is not stored into reflex
+
 void RScanner::UnimportantType(clang::QualType qual_type) const
 {
-   // unimportant - this kind of declaration is not stored into reflex
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::UnimplementedType(clang::QualType qual_type)
 {
    clang::Type::TypeClass k = qual_type.getTypePtr()->getTypeClass();
@@ -400,7 +426,8 @@ void RScanner::UnimplementedType(clang::QualType qual_type)
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::UnimplementedType (const clang::Type* T)
 {
    clang::Type::TypeClass k = T->getTypeClass();
@@ -423,7 +450,8 @@ void RScanner::UnimplementedType (const clang::Type* T)
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetClassName(clang::RecordDecl* D) const
 {
    std::string cls_name = D->getQualifiedNameAsString();
@@ -449,7 +477,8 @@ std::string RScanner::GetClassName(clang::RecordDecl* D) const
    return cls_name;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetEnumName(clang::EnumDecl* D) const
 {
    std::string enum_name = D->getQualifiedNameAsString();
@@ -472,7 +501,8 @@ std::string RScanner::GetEnumName(clang::EnumDecl* D) const
    return enum_name;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::ExprToStr(clang::Expr* expr) const
 {
    clang::LangOptions lang_opts;
@@ -486,7 +516,8 @@ std::string RScanner::ExprToStr(clang::Expr* expr) const
    return stream.str();
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::ConvTemplateName(clang::TemplateName& N) const
 {
    clang::LangOptions lang_opts;
@@ -501,7 +532,8 @@ std::string RScanner::ConvTemplateName(clang::TemplateName& N) const
 }
 
 #ifdef COMPLETE_TEMPLATES
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::ConvTemplateParameterList(clang::TemplateParameterList* list) const
 {
    std::string result = "";
@@ -562,13 +594,15 @@ std::string RScanner::ConvTemplateParameterList(clang::TemplateParameterList* li
    return "<" + result + ">";
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::ConvTemplateParams(clang::TemplateDecl* D)
 {
    return ConvTemplateParameterList(D->getTemplateParameters());
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::ConvTemplateArguments(const clang::TemplateArgumentList& list)
 {
    clang::LangOptions lang_opts;
@@ -578,7 +612,8 @@ std::string RScanner::ConvTemplateArguments(const clang::TemplateArgumentList& l
 }
 #endif // COMPLETE_TEMPLATES
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::FuncParameters(clang::FunctionDecl* D) const
 {
    std::string result = "";
@@ -604,7 +639,8 @@ std::string RScanner::FuncParameters(clang::FunctionDecl* D) const
    return result;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::FuncParameterList(clang::FunctionDecl* D) const
 {
    std::string result = "";
@@ -622,11 +658,11 @@ std::string RScanner::FuncParameterList(clang::FunctionDecl* D) const
    return "(" + result + ")";
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// This method visits a namespace node
+
 bool RScanner::VisitNamespaceDecl(clang::NamespaceDecl* N)
 {
-   // This method visits a namespace node
-
    // We don't need to visit this while creating the big PCM
    if (fScanType == EScanType::kOnePCM)
       return true;
@@ -637,8 +673,6 @@ bool RScanner::VisitNamespaceDecl(clang::NamespaceDecl* N)
    }
 
    bool ret = true;
-
-   DumpDecl(N, "");
 
    const ClassSelectionRule *selected = fSelectionRules.IsDeclSelected(N);
    if (selected) {
@@ -674,20 +708,20 @@ bool RScanner::VisitNamespaceDecl(clang::NamespaceDecl* N)
    return ret;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::VisitRecordDecl(clang::RecordDecl* D)
 {
-
    // This method visits a class node
    return TreatRecordDeclOrTypedefNameDecl(D);
 
 
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::TreatRecordDeclOrTypedefNameDecl(clang::TypeDecl* typeDecl)
 {
-
    // For every class is created a new class buider irrespectful of weather the
    // class is internal for another class declaration or not.
    // RecordDecls and TypedefDecls (or RecordDecls!) are treated.
@@ -808,16 +842,26 @@ bool RScanner::TreatRecordDeclOrTypedefNameDecl(clang::TypeDecl* typeDecl)
       bool rcrdDeclNotAlreadySelected = fselectedRecordDecls.insert((RecordDecl*)recordDecl->getCanonicalDecl()).second;
 
       // Prompt a warning in case the class was selected twice
+      auto declSelRuleMapIt = fDeclSelRuleMap.find(recordDecl->getCanonicalDecl());
       if (!fFirstPass &&
           !rcrdDeclNotAlreadySelected &&
-          selected->HasAttributeName()){
+          selected->HasAttributeName() &&
+          declSelRuleMapIt != fDeclSelRuleMap.end() &&
+          declSelRuleMapIt->second != selected){
          const std::string& name_value = selected->GetAttributeName();
          std::string normName;
          TMetaUtils::GetNormalizedName(normName,
                                        recordDecl->getASTContext().getTypeDeclType(recordDecl),
                                        fInterpreter,
                                        fNormCtxt);
+
+         auto previouslyMatchingRule = declSelRuleMapIt->second;
+         int previouslineno = previouslyMatchingRule->GetLineNumber();
+
          std::stringstream message;
+         auto lineno = selected->GetLineNumber();
+         std::string cleanFileName =  llvm::sys::path::filename(selected->GetSelFileName());
+         if (lineno > 1) message << "Selection file " << cleanFileName << ", lines " << lineno << " and " << previouslineno << ". ";
          message << "Attempt to select with a named selection rule an already selected class. The name used in the selection is \""
                  << name_value << "\" while the class is \"" << normName << "\".";
          if (selected->GetAttributes().size() > 1){
@@ -825,6 +869,7 @@ bool RScanner::TreatRecordDeclOrTypedefNameDecl(clang::TypeDecl* typeDecl)
          }
          ROOT::TMetaUtils::Warning(0,"%s\n", message.str().c_str());
       }
+
 
       fDeclSelRuleMap[recordDecl->getCanonicalDecl()]=selected;
 
@@ -893,15 +938,15 @@ bool RScanner::TreatRecordDeclOrTypedefNameDecl(clang::TypeDecl* typeDecl)
    return true;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Visitor for every TypedefNameDecl, i.e. aliases and typedefs
+/// We check three conditions before trying to match the name:
+/// 1) If we are creating a big PCM
+/// 2) If the underlying decl is a RecordDecl
+/// 3) If the typedef is eventually contained in the std namespace
+
 bool RScanner::VisitTypedefNameDecl(clang::TypedefNameDecl* D)
 {
-   // Visitor for every TypedefNameDecl, i.e. aliases and typedefs
-   // We check three conditions before trying to match the name:
-   // 1) If we are creating a big PCM
-   // 2) If the underlying decl is a RecordDecl
-   // 3) If the typedef is eventually contained in the std namespace
-
    if (fScanType == EScanType::kOnePCM)
       return true;
 
@@ -921,7 +966,8 @@ bool RScanner::VisitTypedefNameDecl(clang::TypedefNameDecl* D)
     return true;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::VisitEnumDecl(clang::EnumDecl* D)
 {
    if (fScanType == EScanType::kOnePCM)
@@ -935,7 +981,8 @@ bool RScanner::VisitEnumDecl(clang::EnumDecl* D)
    return true;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::VisitVarDecl(clang::VarDecl* D)
 {
    if (!D->hasGlobalStorage() ||
@@ -949,10 +996,11 @@ bool RScanner::VisitVarDecl(clang::VarDecl* D)
    return true;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Nothing to be done here
+
 bool RScanner::VisitFieldDecl(clang::FieldDecl* D)
 {
-   // Nothing to be done here
    return true;
 
 //    bool ret = true;
@@ -977,7 +1025,8 @@ bool RScanner::VisitFieldDecl(clang::FieldDecl* D)
 //    return ret;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::VisitFunctionDecl(clang::FunctionDecl* D)
 {
    if (fScanType == EScanType::kOnePCM)
@@ -993,7 +1042,8 @@ bool RScanner::VisitFunctionDecl(clang::FunctionDecl* D)
    return true;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::TraverseDeclContextHelper(DeclContext *DC)
 {
    bool ret = true;
@@ -1022,10 +1072,10 @@ bool RScanner::TraverseDeclContextHelper(DeclContext *DC)
 
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::string RScanner::GetClassName(clang::DeclContext* DC) const
 {
-
    clang::NamedDecl* N=dyn_cast<clang::NamedDecl>(DC);
    std::string ret;
    if(N && (N->getIdentifier()!=NULL))
@@ -1034,28 +1084,8 @@ std::string RScanner::GetClassName(clang::DeclContext* DC) const
    return ret;
 }
 
-//______________________________________________________________________________
-void RScanner::DumpDecl(clang::Decl* D, const char* msg) const
-{
-   if (fVerboseLevel > 3) {
-      return;
-   }
-   std::string name;
+////////////////////////////////////////////////////////////////////////////////
 
-   if (!D) {
-#ifdef SELECTION_DEBUG
-      if (fVerboseLevel > 3) printf("\nDEBUG - DECL is NULL: %s", msg);
-#endif
-      return;
-   }
-
-   GetDeclName(D, name);
-#ifdef SELECTION_DEBUG
-   if (fVerboseLevel > 3) std::cout<<"\n\n"<<name<<" -> "<<D->getDeclKindName()<<": "<<msg;
-#endif
-}
-
-//______________________________________________________________________________
 bool RScanner::GetDeclName(clang::Decl* D, std::string& name) const
 {
    clang::NamedDecl* N = dyn_cast<clang::NamedDecl> (D);
@@ -1070,7 +1100,8 @@ bool RScanner::GetDeclName(clang::Decl* D, std::string& name) const
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::GetDeclQualName(clang::Decl* D, std::string& qual_name) const
 {
    clang::NamedDecl* N = dyn_cast<clang::NamedDecl> (D);
@@ -1085,7 +1116,8 @@ bool RScanner::GetDeclQualName(clang::Decl* D, std::string& qual_name) const
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 bool RScanner::GetFunctionPrototype(clang::Decl* D, std::string& prototype) const {
    if (!D) {
       return false;
@@ -1120,7 +1152,8 @@ bool RScanner::GetFunctionPrototype(clang::Decl* D, std::string& prototype) cons
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void RScanner::Scan(const clang::ASTContext &C)
 {
    fSourceManager = &C.getSourceManager();
@@ -1146,11 +1179,11 @@ void RScanner::Scan(const clang::ASTContext &C)
 }
 
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Set the callback to the RecordDecl and return the previous one.
+
 RScanner::DeclCallback RScanner::SetRecordDeclCallback(RScanner::DeclCallback callback)
 {
-   // Set the callback to the RecordDecl and return the previous one.
-
    DeclCallback old = fRecordDeclCallback;
    fRecordDeclCallback = callback;
    return old;

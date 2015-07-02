@@ -108,13 +108,14 @@ typedef void (*CallWriteStreamer_t)(const AnnotatedRecordDecl &cl,
                                     std::ostream& dictStream,
                                     bool isAutoStreamer);
 
-const int kInfo     =      0;
-const int kNote     =    500;
-const int kWarning  =   1000;
-const int kError    =   2000;
-const int kSysError =   3000;
-const int kFatal    =   4000;
-const int kMaxLen   =   1024;
+const int kInfo            =      0;
+const int kNote            =    500;
+const int kThrowOnWarning  =    999;
+const int kWarning         =   1000;
+const int kError           =   2000;
+const int kSysError        =   3000;
+const int kFatal           =   4000;
+const int kMaxLen          =   1024;
 
 // Classes ---------------------------------------------------------------------
 class TNormalizedCtxtImpl;
@@ -297,6 +298,9 @@ typedef std::list<RConstructorType> RConstructorTypes;
 
 // Functions -------------------------------------------------------------------
 
+//_____________________________________________________________________________
+unsigned int GetNumberOfWarningsAndErrors();
+
 //______________________________________________________________________________
 int extractAttrString(clang::Attr* attribute, std::string& attrString);
 
@@ -329,7 +333,7 @@ clang::QualType AddDefaultParameters(clang::QualType instanceType,
                                      const TNormalizedCtxt &normCtxt);
 
 //______________________________________________________________________________
-const char* DataMemberInfo__ValidArrayIndex(const clang::DeclaratorDecl &m, int *errnum = 0, const char **errstr = 0);
+llvm::StringRef DataMemberInfo__ValidArrayIndex(const clang::DeclaratorDecl &m, int *errnum = 0, llvm::StringRef  *errstr = 0);
 
 //______________________________________________________________________________
 // Return the ROOT include directory
@@ -439,6 +443,9 @@ std::string GetQualifiedName(const clang::RecordDecl &recordDecl);
 int WriteNamespaceHeader(std::ostream&, const clang::RecordDecl *);
 
 //______________________________________________________________________________
+int WriteNamespaceHeader(std::ostream&, const clang::DeclContext *);
+
+//______________________________________________________________________________
 void WritePointersSTL(const AnnotatedRecordDecl &cl, const cling::Interpreter &interp, const TNormalizedCtxt &normCtxt);
 
 //______________________________________________________________________________
@@ -513,6 +520,12 @@ bool HasCustomStreamerMemberFunction(const AnnotatedRecordDecl &cl,
                                      const clang::CXXRecordDecl* clxx,
                                      const cling::Interpreter &interp,
                                      const TNormalizedCtxt &normCtxt);
+
+//______________________________________________________________________________
+bool HasCustomConvStreamerMemberFunction(const AnnotatedRecordDecl &cl,
+                                         const clang::CXXRecordDecl* clxx,
+                                         const cling::Interpreter &interp,
+                                         const TNormalizedCtxt &normCtxt);
 
 //______________________________________________________________________________
 // Return the header file to be included to declare the Decl

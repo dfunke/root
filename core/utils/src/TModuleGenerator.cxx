@@ -22,6 +22,7 @@
 #include "RConfigure.h"
 #include "RConfig.h"
 
+#include "cling/Interpreter/CIFactory.h"
 #include "clang/Basic/SourceManager.h"
 #include "clang/Frontend/CompilerInstance.h"
 #include "clang/Lex/HeaderSearch.h"
@@ -39,7 +40,8 @@
 using namespace ROOT;
 using namespace clang;
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 TModuleGenerator::TModuleGenerator(CompilerInstance *CI,
                                    bool inlineInputHeaders,
                                    const std::string &shLibFileName):
@@ -48,9 +50,9 @@ TModuleGenerator::TModuleGenerator(CompilerInstance *CI,
    fInlineInputHeaders(inlineInputHeaders),
    fDictionaryName(llvm::sys::path::stem(shLibFileName)),
    fDemangledDictionaryName(llvm::sys::path::stem(shLibFileName)),
-   fModuleDirName(llvm::sys::path::parent_path(shLibFileName))
+   fModuleDirName(llvm::sys::path::parent_path(shLibFileName)),
+   fErrorCount(0)
 {
-
    // Need to resolve _where_ to create the pcm
    // We default in the lib subdirectory
    // otherwise we put it in the same directory as the dictionary file (for ACLiC)
@@ -84,12 +86,13 @@ TModuleGenerator::~TModuleGenerator()
    unlink(fContentName.c_str());
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Check whether the file's extension is compatible with C or C++.
+/// Return whether source, header, Linkdef or nothing.
+
 TModuleGenerator::ESourceFileKind
 TModuleGenerator::GetSourceFileKind(const char *filename) const
 {
-   // Check whether the file's extension is compatible with C or C++.
-   // Return whether source, header, Linkdef or nothing.
    if (filename[0] == '-') return kSFKNotC;
 
    const size_t len = strlen(filename);
@@ -166,10 +169,11 @@ std::pair<std::string, std::string> SplitPPDefine(const std::string &in)
           (in.substr(0, posEq), in.substr(posEq + 1, std::string::npos));
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Parse -I -D -U headers.h SomethingLinkdef.h.
+
 void TModuleGenerator::ParseArgs(const std::vector<std::string> &args)
 {
-   // Parse -I -D -U headers.h SomethingLinkdef.h.
    for (size_t iPcmArg = 1 /*skip argv0*/, nPcmArg = args.size();
          iPcmArg < nPcmArg; ++iPcmArg) {
       ESourceFileKind sfk = GetSourceFileKind(args[iPcmArg].c_str());
@@ -197,13 +201,14 @@ void TModuleGenerator::ParseArgs(const std::vector<std::string> &args)
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Write
+/// #ifndef FOO
+/// # define FOO=bar
+/// #endif
+
 std::ostream &TModuleGenerator::WritePPDefines(std::ostream &out) const
 {
-   // Write
-   // #ifndef FOO
-   // # define FOO=bar
-   // #endif
    for (auto const & strPair : fCompD) {
       std::string cppname(strPair.first);
       size_t pos = cppname.find('(');
@@ -218,13 +223,14 @@ std::ostream &TModuleGenerator::WritePPDefines(std::ostream &out) const
    return out;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Write
+/// #ifdef FOO
+/// # undef FOO
+/// #endif
+
 std::ostream &TModuleGenerator::WritePPUndefines(std::ostream &out) const
 {
-   // Write
-   // #ifdef FOO
-   // # undef FOO
-   // #endif
    for (auto const & undef : fCompU) {
       out << "#ifdef " << undef << "\n"
           "  #undef " << undef << "\n"
@@ -234,13 +240,47 @@ std::ostream &TModuleGenerator::WritePPUndefines(std::ostream &out) const
    return out;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// To be replaced with proper pragma handlers.
+
+int WarnIfPragmaOnceDetected(const std::string& fullHeaderPath,
+                              const std::string& headerFileContent)
+{
+   std::istringstream headerFile(headerFileContent);
+   std::string line;
+   while(std::getline(headerFile,line)){
+      llvm::StringRef lineRef (line);
+      auto trimmedLineRef = lineRef.trim();
+      if (trimmedLineRef.startswith("#pragma") &&
+          (trimmedLineRef.endswith(" once") || trimmedLineRef.endswith("\tonce"))) {
+         std::cerr << "Error: #pragma once directive detected in header file "
+                  << fullHeaderPath
+                  << " which was requested to be inlined.\n";
+         return 1;
+      }
+   }
+   return 0;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+
+int ExtractBufferContent(const std::string& fullHeaderPath, std::string& bufferContent)
+{
+   std::ifstream buffer(fullHeaderPath);
+   bufferContent = std::string((std::istreambuf_iterator<char>(buffer)),
+                                std::istreambuf_iterator<char>());
+
+   return WarnIfPragmaOnceDetected(fullHeaderPath,bufferContent);
+}
+
+////////////////////////////////////////////////////////////////////////////////
+/// Write
+/// #include "header1.h"
+/// #include "header2.h"
+/// or, if inlining of headers is requested, dump the content of the files.
+
 std::ostream &TModuleGenerator::WritePPIncludes(std::ostream &out) const
 {
-   // Write
-   // #include "header1.h"
-   // #include "header2.h"
-   // or, if inlining of headers is requested, dump the content of the files.
    std::string fullHeaderPath;
    for (auto const & incl : fHeaders) {
       if (fInlineInputHeaders){
@@ -249,9 +289,10 @@ std::ostream &TModuleGenerator::WritePPIncludes(std::ostream &out) const
             ROOT::TMetaUtils::Error(0, "Cannot find header %s: cannot inline it.\n", fullHeaderPath.c_str());
             continue;
          }
-         std::ifstream buffer(fullHeaderPath);
-         std::string bufferContent((std::istreambuf_iterator<char>(buffer)),
-                                    std::istreambuf_iterator<char>());
+
+         std::string bufferContent;
+         fErrorCount += ExtractBufferContent(fullHeaderPath, bufferContent);
+
          out << bufferContent << std::endl;
       } else {
          out << "#include \"" << incl << "\"\n";
@@ -261,7 +302,8 @@ std::ostream &TModuleGenerator::WritePPIncludes(std::ostream &out) const
    return out;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::ostream &TModuleGenerator::WriteStringVec(const std::vector<std::string> &vec,
       std::ostream &out) const
 {
@@ -272,7 +314,8 @@ std::ostream &TModuleGenerator::WriteStringVec(const std::vector<std::string> &v
    return out;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 std::ostream &TModuleGenerator::WriteStringPairVec(const StringPairVec_t &vec,
       std::ostream &out) const
 {
@@ -295,13 +338,13 @@ std::ostream &TModuleGenerator::WriteStringPairVec(const StringPairVec_t &vec,
    return out;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+
 void TModuleGenerator::WriteRegistrationSource(std::ostream &out,
       const std::string &fwdDeclnArgsToKeepString,
       const std::string &headersClassesMapString,
       const std::string &fwdDeclString) const
 {
-
    std::string payloadCode;
 
    // Add defines and undefines to the payloadCode
@@ -389,15 +432,15 @@ void TModuleGenerator::WriteRegistrationSource(std::ostream &out,
                               "}" << std::endl;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Write a header file describing the content of this module
+/// through a series of variables inside the namespace
+/// ROOT::Dict::[DictionaryName]. Each variable is an array of string
+/// literals, with a const char* of 0 being the last element, e.g.
+/// ROOT::Dict::_DictName::arrIncludes[] = { "A.h", "B.h", 0 };
+
 void TModuleGenerator::WriteContentHeader(std::ostream &out) const
 {
-   // Write a header file describing the content of this module
-   // through a series of variables inside the namespace
-   // ROOT::Dict::[DictionaryName]. Each variable is an array of string
-   // literals, with a const char* of 0 being the last element, e.g.
-   // ROOT::Dict::_DictName::arrIncludes[] = { "A.h", "B.h", 0 };
-
    out << "namespace ROOT { namespace Dict { namespace _"
        << GetDictionaryName() << "{\n";
 
@@ -416,11 +459,12 @@ void TModuleGenerator::WriteContentHeader(std::ostream &out) const
    out << "} } }" << std::endl;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Return true if the header is found in the include paths
+/// in this case also fill the full path variable with the full path.
+
 bool TModuleGenerator::FindHeader(const std::string &hdrName, std::string &hdrFullPath) const
 {
-   // Return true if the header is found in the include paths
-   // in this case also fill the full path variable with the full path.
    hdrFullPath = hdrName;
    bool headerFound = false;
    if (llvm::sys::fs::exists(hdrFullPath)) {
@@ -437,15 +481,15 @@ bool TModuleGenerator::FindHeader(const std::string &hdrName, std::string &hdrFu
    return headerFound;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Write a header file pulling in the content of this module
+/// through a series of #defined, #undefs and #includes.
+/// The sequence corrsponds to a rootcling invocation with
+///   -c -DFOO -UBAR header.h
+/// I.e. defines, undefines and finally includes.
+
 void TModuleGenerator::WriteUmbrellaHeader(std::ostream &out) const
 {
-   // Write a header file pulling in the content of this module
-   // through a series of #defined, #undefs and #includes.
-   // The sequence corrsponds to a rootcling invocation with
-   //   -c -DFOO -UBAR header.h
-   // I.e. defines, undefines and finally includes.
-
    WritePPDefines(out);
    WritePPUndefines(out);
    WritePPIncludes(out);

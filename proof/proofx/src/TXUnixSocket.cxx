@@ -26,13 +26,13 @@
 
 ClassImp(TXUnixSocket)
 
-//_____________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Constructor
+
 TXUnixSocket::TXUnixSocket(const char *url,
                            Int_t psid, Char_t capver, TXHandler *handler, int fd)
              : TXSocket(0,'i',psid,capver,0,-1,handler)
 {
-   // Constructor
-
    // Initialization
    if (url) {
 
@@ -59,17 +59,17 @@ TXUnixSocket::TXUnixSocket(const char *url,
    }
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Try reconnection after failure
+
 Int_t TXUnixSocket::Reconnect()
 {
-   // Try reconnection after failure
-
    if (gDebug > 0) {
       Info("Reconnect", "%p: %p: %d: trying to reconnect on %s", this,
                         fConn, (fConn ? fConn->IsValid() : 0), fUrl.Data());
    }
 
-   Int_t tryreconnect = gEnv->GetValue("TXSocket.Reconnect", 1);
+   Int_t tryreconnect = gEnv->GetValue("TXSocket.Reconnect", 0);
    if (tryreconnect == 0 || fXrdProofdVersion < 1005) {
       if (tryreconnect == 0)
          Info("Reconnect","%p: reconnection attempts explicitly disabled!", this);

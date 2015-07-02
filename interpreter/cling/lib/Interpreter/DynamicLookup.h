@@ -10,7 +10,7 @@
 #ifndef CLING_DYNAMIC_LOOKUP_H
 #define CLING_DYNAMIC_LOOKUP_H
 
-#include "TransactionTransformer.h"
+#include "ASTTransformer.h"
 
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Sema/Ownership.h"
@@ -19,6 +19,7 @@
 
 
 namespace clang {
+  class Decl;
   class Sema;
 }
 
@@ -114,7 +115,7 @@ namespace cling {
   /// which does the delayed evaluation. It uses a callback function, which
   /// should be reimplemented in the subsystem that provides the runtime types
   /// and addresses of the expressions.
-  class EvaluateTSynthesizer : public TransactionTransformer,
+  class EvaluateTSynthesizer : public ASTTransformer,
                                public clang::StmtVisitor<EvaluateTSynthesizer,
                                                          ASTNodeInfo> {
 
@@ -178,7 +179,7 @@ namespace cling {
 
     ~EvaluateTSynthesizer();
 
-    virtual void Transform();
+    Result Transform(clang::Decl* D) override;
 
     MapTy& getSubstSymbolMap() { return m_SubstSymbolMap; }
 
@@ -215,6 +216,11 @@ namespace cling {
     ///
     ASTNodeInfo VisitCXXDeleteExpr(clang::CXXDeleteExpr* Node);
 
+    ///\brief Surrounds member accesses into dependent types; remove on
+    /// subsitution of its child expression.
+    ///
+    ASTNodeInfo VisitCXXDependentScopeMemberExpr(
+                                      clang::CXXDependentScopeMemberExpr* Node);
     ASTNodeInfo VisitExpr(clang::Expr* Node);
     ASTNodeInfo VisitBinaryOperator(clang::BinaryOperator* Node);
     ASTNodeInfo VisitCallExpr(clang::CallExpr* E);

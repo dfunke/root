@@ -67,13 +67,29 @@ if(PYTHONINTERP_FOUND)
   add_custom_target(cling-test
     COMMAND ${PYTHON_EXECUTABLE}
                 ${LIT}
-                --param claig_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
+                --param cling_site_config=${CMAKE_CURRENT_BINARY_DIR}/lit.site.cfg
                 --param cling_unit_site_config=${CMAKE_CURRENT_BINARY_DIR}/Unit/lit.site.cfg
                 --param build_config=${CMAKE_CFG_INTDIR}
                 --param build_mode=${RUNTIME_BUILD_MODE}
                 ${LIT_ARGS}
-                ${CMAKE_CURRENT_BINARY_DIR}
+                \$\(if $(TESTDIRS),$(TESTDIRS),.\)
                 COMMENT "Running Cling regression tests")
+
+add_custom_command(OUTPUT cling-headers.stamp
+                   COMMAND ${CMAKE_COMMAND} -E copy_directory
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../../llvm/src/include/llvm
+                           ${CMAKE_CURRENT_BINARY_DIR}/../../llvm/src/include/llvm
+                   COMMAND ${CMAKE_COMMAND} -E copy_directory
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../../llvm/src/include/llvm-c
+                           ${CMAKE_CURRENT_BINARY_DIR}/../../llvm/src/include/llvm-c
+                   COMMAND ${CMAKE_COMMAND} -E copy_directory
+                           ${CMAKE_CURRENT_SOURCE_DIR}/../../llvm/src/tools/clang/include/clang
+                           ${CMAKE_CURRENT_BINARY_DIR}/../../llvm/src/include/clang
+                   COMMAND ${CMAKE_COMMAND} -E copy_directory
+                           ${CMAKE_CURRENT_BINARY_DIR}/../../llvm/src/tools/clang/include/clang
+                           ${CMAKE_CURRENT_BINARY_DIR}/../../llvm/src/include/clang
+                   COMMAND ${CMAKE_COMMAND} -E touch cling-headers.stamp)
+add_custom_target(cling-headers DEPENDS cling-headers.stamp)
 
 #  if( NOT CLING_BUILT_STANDALONE )
 #    add_custom_target(check-all
@@ -98,7 +114,5 @@ if(PYTHONINTERP_FOUND)
 
   add_dependencies(cling-test cling-test.deps)
   add_dependencies(cling-test.deps
-                 cling cling-headers c-index-test diagtool arcmt-test c-arcmt-test
-                 )
-
+                   cling cling-headers clang FileCheck c-index-test diagtool arcmt-test c-arcmt-test)
 endif()

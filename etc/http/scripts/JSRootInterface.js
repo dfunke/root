@@ -56,11 +56,18 @@ function ReadFile() {
    if (filename.length == 0) return;
 
    if (hpainter==null) alert("Hierarchy painter not initialized");
-                  else hpainter.OpenRootFile(filename);
+   if ((filename.lastIndexOf(".json") == filename.length-5) ||
+       (filename.lastIndexOf(".JSON") == filename.length-5))
+         hpainter.OpenJsonFile(filename);
+      else
+         hpainter.OpenRootFile(filename);
 }
 
 
 function BuildSimpleGUI() {
+
+   if (JSROOT.GetUrlOption("nobrowser")!=null)
+      return JSROOT.BuildNobrowserGUI();
 
    var myDiv = $('#simpleGUI');
    var online = false;
@@ -73,9 +80,7 @@ function BuildSimpleGUI() {
 
    JSROOT.Painter.readStyleFromURL();
 
-   var nobrowser = JSROOT.GetUrlOption("nobrowser") != null;
-
-   var guiCode = "<div id='left-div' class='column'>";
+   var guiCode = "<div id='left-div' class='column' style='top:1px; bottom:1px'>";
 
    if (online) {
       guiCode += '<h1><font face="Verdana" size="4">ROOT online server</font></h1>'
@@ -88,15 +93,15 @@ function BuildSimpleGUI() {
    } else {
 
       var files = myDiv.attr("files");
-      var path = myDiv.attr("path");
+      var path = JSROOT.GetUrlOption("path");
+      if (path==null) path = myDiv.attr("path");
+      if (path==null) path = "";
 
       if (files==null) files = "../files/hsimple.root";
-      if (path==null) path = "";
       var arrFiles = files.split(';');
 
-      var guiCode = "<div id='left-div' class='column'>"
-         +"<h1><font face='Verdana' size='4'>Read a ROOT file</font></h1>"
-         +"<p><font face='Verdana' size='1px'><a href='http://root.cern.ch/js/jsroot.html'>JSROOT</a> version <span style='color:green'><b>" + JSROOT.version + "</b></span></font></p>";
+      guiCode += "<h1><font face='Verdana' size='4'>Read a ROOT file</font></h1>"
+              + "<p><font face='Verdana' size='1px'><a href='http://root.cern.ch/js/'>JSROOT</a> version <span style='color:green'><b>" + JSROOT.version + "</b></span></font></p>";
 
       if (JSROOT.GetUrlOption("noselect")==null) {
         guiCode += '<form name="ex">'
@@ -122,120 +127,49 @@ function BuildSimpleGUI() {
 
    guiCode += '<div id="browser"></div>'
            +'</div>'
-           +'<div id="separator-div"></div>'
-           +'<div id="right-div" class="column"></div>';
+           +'<div id="separator-div" style="top:1px; bottom:1px"></div>'
+           +'<div id="right-div" class="column" style="top:1px; bottom:1px"></div>';
 
    var drawDivId = 'right-div';
 
-   if (nobrowser) {
-      guiCode = "";
-      $('html').css('height','100%');
-      $('body').css('min-height','100%').css('margin','0px').css("overflow", "hidden");
-
-      drawDivId = myDiv.attr('id');
-
-      myDiv.css("position", "absolute")
-           .css("left", "1px")
-           .css("top", "1px")
-           .css("bottom", "1px")
-           .css("right", "1px");
-   }
-
    myDiv.empty().append(guiCode);
 
-   var filesarr = JSROOT.GetUrlOptionAsArray("file;files");
-   var filesdir = JSROOT.GetUrlOption("path");
-   if (filesdir!=null)
-      for (var i in filesarr) filesarr[i] = filesdir + filesarr[i];
+   var h0 = null;
 
-   var itemsarr = JSROOT.GetUrlOptionAsArray("item;items");
+   if (online) {
+      if (typeof GetCachedHierarchy == 'function') h0 = GetCachedHierarchy();
+      if (typeof h0 != 'object') h0 = "";
+   }
 
-   var optionsarr = JSROOT.GetUrlOptionAsArray("opt;opts");
+   hpainter = new JSROOT.HierarchyPainter('root', 'browser');
 
-   var monitor = JSROOT.GetUrlOption("monitoring");
+   hpainter.SetDisplay(guiLayout(), drawDivId);
 
-   var ilayout = JSROOT.GetUrlOption("layout");
-   if (ilayout=="") ilayout = null;
-   var layout = ilayout;
+   JSROOT.Painter.ConfigureVSeparator(hpainter);
 
-   hpainter = new JSROOT.HierarchyPainter('root', nobrowser ? null : 'browser');
+   // JSROOT.Painter.ConfigureHSeparator(28, true);
 
-   if (JSROOT.GetUrlOption('files_monitoring')!=null) hpainter.files_monitoring = true;
+   hpainter.StartGUI(h0, function() {
 
-   JSROOT.RegisterForResize(hpainter);
-
-   if (nobrowser) {
-      if (layout==null) layout= "simple";
-   } else {
-      if (layout==null)
-         layout = guiLayout();
-      else
-         setGuiLayout(layout);
-
-      JSROOT.ConfigureVSeparator(hpainter);
+      setGuiLayout(hpainter.GetLayout());
 
       // specify display kind every time selection done
       // will be actually used only for first drawing or after reset
       $("#layout").change(function() {
          if (hpainter) hpainter.SetDisplay(guiLayout(), drawDivId);
       });
-   }
 
-   hpainter.SetDisplay(layout, drawDivId);
-
-   hpainter.SetMonitoring(monitor);
-
-   var h0 = null;
-
-   if (online) {
-      if (!nobrowser)
+      if (online) {
          $("#monitoring")
-          .prop('checked', hpainter.IsMonitoring())
-          .click(function() {
-             hpainter.EnableMonitoring(this.checked);
-             if (this.checked) hpainter.updateAll();
-          });
-
-       if (typeof GetCashedHierarchy == 'function') h0 = GetCashedHierarchy();
-       if (typeof h0 != 'object') h0 = "";
-   } else {
-      if ((filesarr.length>0) && !nobrowser)
-         $("#urlToLoad").val(filesarr[0]);
-   }
-
-   function OpenAllFiles() {
-      if (filesarr.length>0)
-         hpainter.OpenRootFile(filesarr.shift(), OpenAllFiles);
-      else
-         hpainter.displayAll(itemsarr, optionsarr, function() { hpainter.RefreshHtml(); });
-   }
-
-   function AfterOnlineOpened() {
-      // check if server enables monitoring
-      if (('_monitoring' in hpainter.h) && (monitor==null)) {
-         hpainter.SetMonitoring(hpainter.h._monitoring);
-         if (!nobrowser) $("#monitoring").prop('checked', hpainter.IsMonitoring());
+             .prop('checked', hpainter.IsMonitoring())
+             .click(function() {
+                hpainter.EnableMonitoring(this.checked);
+                if (this.checked) hpainter.updateAll();
+             });
+      } else {
+         var fname = "";
+         hpainter.ForEachRootFile(function(item) { if (fname=="") fname = item._fullurl; });
+         $("#urlToLoad").val(fname);
       }
-
-      if (('_layout' in hpainter.h) && (ilayout==null)) {
-         setGuiLayout(hpainter.h._layout);
-         hpainter.SetDisplay(hpainter.h._layout, drawDivId);
-      }
-
-      if (('_loadfile' in hpainter.h) && (filesarr.length==0)) {
-         filesarr = JSROOT.ParseAsArray(hpainter.h._loadfile);
-      }
-
-      if (('_drawitem' in hpainter.h) && (itemsarr.length==0)) {
-         itemsarr = JSROOT.ParseAsArray(hpainter.h._drawitem);
-         optionsarr = JSROOT.ParseAsArray(hpainter.h['_drawopt']);
-      }
-
-      OpenAllFiles();
-   }
-
-   if (h0!=null) hpainter.OpenOnline(h0, AfterOnlineOpened);
-            else OpenAllFiles();
-
-   setInterval(function() { if (hpainter.IsMonitoring()) hpainter.updateAll(); }, hpainter.MonitoringInterval());
+   });
 }

@@ -10,13 +10,14 @@
 #ifndef CLING_VALUE_PRINTER_SYNTHESIZER_H
 #define CLING_VALUE_PRINTER_SYNTHESIZER_H
 
-#include "TransactionTransformer.h"
+#include "ASTTransformer.h"
 
 #include <memory>
 
 namespace clang {
   class ASTContext;
   class CompoundStmt;
+  class Decl;
   class FunctionDecl;
   class Expr;
   class Sema;
@@ -28,7 +29,7 @@ namespace llvm {
 
 namespace cling {
 
-  class ValuePrinterSynthesizer : public TransactionTransformer {
+  class ValuePrinterSynthesizer : public WrapperTransformer {
 
   private:
     ///\brief Needed for the AST transformations, owned by Sema.
@@ -49,7 +50,7 @@ public:
 
     virtual ~ValuePrinterSynthesizer();
 
-    virtual void Transform();
+    Result Transform(clang::Decl* D) override;
 
   private:
     ///\brief Tries to attach a value printing mechanism to the given decl group

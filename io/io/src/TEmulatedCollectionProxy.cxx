@@ -149,7 +149,7 @@ TGenCollectionProxy *TEmulatedCollectionProxy::InitializeEx(Bool_t silent)
                fValue = new Value(nam,silent);
                fKey   = new Value(inside[1],silent);
                fVal   = new Value(inside[2],silent);
-               if ( !fValue->IsValid() || !fKey->IsValid() || !fVal->IsValid() ) {
+               if ( !(*fValue).IsValid() || !fKey->IsValid() || !fVal->IsValid() ) {
                   return 0;
                }
                fPointers |= 0 != (fKey->fCase&kIsPointer);
@@ -172,7 +172,7 @@ TGenCollectionProxy *TEmulatedCollectionProxy::InitializeEx(Bool_t silent)
             default:
                fValue = new Value(inside[1],silent);
                fVal   = new Value(*fValue);
-               if ( !fValue->IsValid() || !fVal->IsValid() ) {
+               if ( !(*fValue).IsValid() || !fVal->IsValid() ) {
                   return 0;
                }
                if ( 0 == fValDiff )  {
@@ -447,12 +447,12 @@ void* TEmulatedCollectionProxy::Allocate(UInt_t n, Bool_t forceDelete)
    return fEnv->fObject;
 }
 
-//______________________________________________________________________________
+////////////////////////////////////////////////////////////////////////////////
+/// Insert data into the container where data is a C-style array of the actual type contained in the collection
+/// of the given size.   For associative container (map, etc.), the data type is the pair<key,value>.
+
 void TEmulatedCollectionProxy::Insert(const void * /* data */, void * /*container*/, size_t /*size*/)
 {
-   // Insert data into the container where data is a C-style array of the actual type contained in the collection
-   // of the given size.   For associative container (map, etc.), the data type is the pair<key,value>.
-
    Fatal("Insert","Not yet implemented, require copy of objects.");
 }
 

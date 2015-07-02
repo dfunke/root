@@ -10,7 +10,7 @@ find_package(ROOT REQUIRED)
 
 #---Copy the CTestCustom.cmake file into the build directory---------------------------------
 configure_file(${CMAKE_CURRENT_SOURCE_DIR}/CTestCustom.cmake ${CMAKE_CURRENT_BINARY_DIR} COPYONLY)
-
+enable_testing()
 
 if(CMAKE_SYSTEM_NAME MATCHES Darwin)
   # To avoid to set ld_Library_path to locate the test libraries
@@ -22,8 +22,10 @@ if(DEFINED ROOT_SOURCE_DIR)  # Testing using the binary tree
   include_directories(${ROOT_SOURCE_DIR}/tutorials)
   include_directories(${ROOT_SOURCE_DIR}/tmva/inc)
   set(ROOT_root_CMD ${ROOT_BINARY_DIR}/root.exe)
-else()
+else()                       # Testing using an installation (assuming access to ROOT CMake modules)
   include_directories(${ROOT_INCLUDE_DIRS}/../tutorials)
+  add_definitions(${ROOT_DEFINITIONS})
+  include(RootNewMacros)
 endif()
 
 #---environment-------------------------------------------------------------------------------
@@ -49,7 +51,7 @@ ROOT_ADD_TEST(test-minexam COMMAND minexam)
 
 #--tstring-------------------------------------------------------------------------------------
 ROOT_EXECUTABLE(tstring tstring.cxx LIBRARIES Core)
-configure_file(tstring.cxx tstring.cxx @COPY_ONLY)
+configure_file(tstring.cxx tstring.cxx COPYONLY)
 ROOT_ADD_TEST(test-tstring COMMAND tstring)
 
 #--tcollex-------------------------------------------------------------------------------------
@@ -112,8 +114,8 @@ ROOT_ADD_TEST(test-stresslinear-interpreted COMMAND ${ROOT_root_CMD} -b -q -l ${
 
 #--stressGraphics------------------------------------------------------------------------------------
 ROOT_EXECUTABLE(stressGraphics stressGraphics.cxx LIBRARIES Graf Gpad Postscript)
-configure_file(stressGraphics.ref stressGraphics.ref @COPY_ONLY)
-configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../tutorials/graphics/earth.dat earth.dat @COPY_ONLY)
+configure_file(stressGraphics.ref stressGraphics.ref COPYONLY)
+configure_file(${CMAKE_CURRENT_SOURCE_DIR}/../tutorials/graphics/earth.dat earth.dat COPYONLY)
 ROOT_ADD_TEST(test-stressgraphics ENVIRONMENT LD_LIBRARY_PATH=${CMAKE_BINARY_DIR}/lib:$ENV{LD_LIBRARY_PATH} COMMAND stressGraphics -b -k FAILREGEX "FAILED|Error in")
 ROOT_ADD_TEST(test-stressgraphics-interpreted COMMAND ${ROOT_root_CMD} -b -q -l ${CMAKE_CURRENT_SOURCE_DIR}/stressGraphics.cxx
               FAILREGEX "FAILED|Error in" DEPENDS test-stressgraphics)
@@ -127,7 +129,7 @@ ROOT_ADD_TEST(test-stresshistogram-interpreted COMMAND ${ROOT_root_CMD} -b -q -l
 #--stressGUI---------------------------------------------------------------------------------------
 ROOT_EXECUTABLE(stressGUI stressGUI.cxx LIBRARIES Gui Recorder GuiHtml ASImageGui)
 #---Cannot run GUI test in batch mode--------------------
-#configure_file(stressGUI.ref stressGUI.ref @COPY_ONLY)
+#configure_file(stressGUI.ref stressGUI.ref COPYONLY)
 #ROOT_ADD_TEST(test-stressgui COMMAND stressGUI -ref FAILREGEX "FAILED|Error in")
 
 #--stressSpectrum----------------------------------------------------------------------------------
@@ -177,7 +179,8 @@ endif()
 #--stressRooStats----------------------------------------------------------------------------------
 if(ROOT_roofit_FOUND)
   ROOT_EXECUTABLE(stressRooStats stressRooStats.cxx LIBRARIES RooStats)
-  ROOT_ADD_TEST(test-stressroostats COMMAND stressRooStats -f ${CMAKE_SOURCE_DIR}/test/stressRooStats_ref.root FAILREGEX "FAILED|Error in")
+  configure_file(stressRooStats_ref.root stressRooStats_ref.root COPYONLY)
+  ROOT_ADD_TEST(test-stressroostats COMMAND stressRooStats FAILREGEX "FAILED|Error in")
   ROOT_ADD_TEST(test-stressroostats-interpreted COMMAND ${ROOT_root_CMD} -b -q -l ${CMAKE_CURRENT_SOURCE_DIR}/stressRooStats.cxx
                 FAILREGEX "FAILED|Error in" DEPENDS test-stressroostats)
 endif()
@@ -186,8 +189,9 @@ endif()
 if(ROOT_roofit_FOUND)
 if(ROOT_xml_FOUND)
   ROOT_EXECUTABLE(stressHistFactory stressHistFactory.cxx LIBRARIES RooStats HistFactory XMLParser)
-  file(COPY ${CMAKE_SOURCE_DIR}/test/HistFactoryTest.tar DESTINATION  ${CMAKE_CURRENT_BINARY_DIR} )
-  ROOT_ADD_TEST(test-stressHistFactory ENVIRONMENT ROOTSYS=${CMAKE_BINARY_DIR} COMMAND stressHistFactory -f ${CMAKE_SOURCE_DIR}/test/stressHistFactory_ref.root FAILREGEX "FAILED|Error in")
+  configure_file(HistFactoryTest.tar HistFactoryTest.tar COPYONLY)
+  configure_file(stressHistFactory_ref.root stressHistFactory_ref.root COPYONLY)
+  ROOT_ADD_TEST(test-stressHistFactory ENVIRONMENT ROOTSYS=${CMAKE_BINARY_DIR} COMMAND stressHistFactory FAILREGEX "FAILED|Error in")
   ROOT_ADD_TEST(test-stressHistFactory-interpreted COMMAND ${ROOT_root_CMD} -b -q -l ${CMAKE_CURRENT_SOURCE_DIR}/stressHistFactory.cxx FAILREGEX "FAILED|Error in" DEPENDS test-stressHistFactory)
 endif()
 endif()
@@ -230,7 +234,7 @@ ROOT_ADD_TEST(test-stressinterpreter COMMAND stressInterpreter
               FAILREGEX Error|FAILED)
 
 #--stressHepix-------------------------------------------------------------------------------
-#ROOT_EXECUTABLE(stressHepix stressHepix.cxx LIBRARIES Core)
+ROOT_EXECUTABLE(stressHepix stressHepix.cxx LIBRARIES Core)
 #ROOT_ADD_TEST(test-stressHepix COMMAND stressHepix FAILREGEX "FAILED|Error in")
 
 #--stressProof-------------------------------------------------------------------------------
@@ -272,3 +276,13 @@ endif()
 #--TestTformula------------------------------------------------------------------------------------
 ROOT_EXECUTABLE(TFormulaTests TFormulaTests.cxx LIBRARIES Hist RIO)
 ROOT_ADD_TEST(test-TFormulaTests COMMAND TFormulaTests FAILREGEX "FAILED|Error in")
+
+#--TBB basic test----------------------------------------------------------------------------------
+if(ROOT_tbb_FOUND)
+  include_directories(${TBB_INCLUDE_DIRS})
+  ROOT_EXECUTABLE(testTBB testTBB.cxx LIBRARIES ${TBB_LIBRARIES})
+  ROOT_ADD_TEST(test-TBB COMMAND testTBB FAILREGEX "FAILED|Error in")
+  if(builtin_tbb)
+    add_dependencies(testTBB TBB)
+  endif()
+endif()

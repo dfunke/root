@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "cling/Interpreter/CIFactory.h"
+#include "ClingUtils.h"
 
 #include "DeclCollector.h"
 #include "cling-compiledata.h"
@@ -48,9 +49,14 @@
   #define NOMINMAX
   #include <Windows.h>
   #include <sstream>
+  #include <direct.h>
   #define popen _popen
   #define pclose _pclose
+  #define getcwd_func _getcwd
   #pragma comment(lib, "Advapi32.lib")
+#else
+#include <unistd.h>
+  #define getcwd_func getcwd
 #endif
 
 using namespace clang;
@@ -327,6 +333,9 @@ namespace {
       Opts.CPlusPlus11 = 1;
 #endif
 
+#ifdef _REENTRANT
+    Opts.POSIXThreads = 1;
+#endif
   }
 
   static void SetClingTargetLangOpts(LangOptions& Opts,
@@ -483,6 +492,47 @@ namespace {
     return &Cmd->getArguments();
   }
 
+  /// Set cling's preprocessor defines to match the cling binary.
+  static void SetPreprocessorFromBinary(PreprocessorOptions& PPOpts) {
+#ifdef _MSC_VER
+    PPOpts.addMacroDef("_HAS_EXCEPTIONS=0");
+#endif
+
+    // Since cling, uses clang instead, macros always sees __CLANG__ defined
+    // In addition, clang also defined __GNUC__, we add the following two macros
+    // to allow scripts, and more important, dictionary generation to know which
+    // of the two is the underlying compiler.
+
+#ifdef __clang__
+    PPOpts.addMacroDef("__CLING__clang__=" ClingStringify(__clang__));
+#elif defined(__GNUC__)
+    PPOpts.addMacroDef("__CLING__GNUC__=" ClingStringify(__GNUC__));
+#endif
+
+// https://gcc.gnu.org/onlinedocs/libstdc++/manual/using_dual_abi.html
+#ifdef _GLIBCXX_USE_CXX11_ABI
+    PPOpts.addMacroDef("_GLIBCXX_USE_CXX11_ABI="
+                       ClingStringify(_GLIBCXX_USE_CXX11_ABI));
+#endif
+  }
+
+  /// Set target-specific preprocessor defines.
+  static void SetPreprocessorFromTarget(PreprocessorOptions& PPOpts,
+                                        const llvm::Triple& TTriple) {
+    if (TTriple.getEnvironment() == llvm::Triple::Cygnus) {
+      // clang "forgets" the basic arch part needed by winnt.h:
+      if (TTriple.getArch() == llvm::Triple::x86) {
+        PPOpts.addMacroDef("_X86_=1");
+      } else if (TTriple.getArch() == llvm::Triple::x86_64) {
+        PPOpts.addMacroDef("__x86_64=1");
+      } else {
+        llvm::errs() << "Warning in cling::CIFactory::createCI():\n"
+          "unhandled target architecture "
+        << TTriple.getArchName() << '\n';
+      }
+    }
+  }
+
   static CompilerInstance* createCIImpl(
                                      std::unique_ptr<llvm::MemoryBuffer> buffer,
                                         int argc,
@@ -582,6 +632,7 @@ namespace {
     const clang::driver::ArgStringList* CC1Args
       = GetCC1Arguments(Diags.get(), Compilation.get());
     if (CC1Args == NULL) {
+      delete Invocation;
       return 0;
     }
     clang::CompilerInvocation::CreateFromArgs(*Invocation, CC1Args->data() + 1,
@@ -623,28 +674,28 @@ namespace {
     std::unique_ptr<CompilerInstance> CI(new CompilerInstance());
     CI->setInvocation(Invocation);
     CI->setDiagnostics(Diags.get());
-    {
-      //
-      //  Buffer the error messages while we process
-      //  the compiler options.
-      //
 
-      // Set the language options, which cling needs
-      SetClingCustomLangOpts(CI->getLangOpts());
+    PreprocessorOptions& PPOpts = CI->getInvocation().getPreprocessorOpts();
 
-#ifdef _MSC_VER
-      CI->getInvocation().getPreprocessorOpts().addMacroDef("_HAS_EXCEPTIONS=0");
-#endif
-      CI->getInvocation().getPreprocessorOpts().addMacroDef("__CLING__");
-      if (CI->getLangOpts().CPlusPlus11 == 1) {
-        // http://llvm.org/bugs/show_bug.cgi?id=13530
-        CI->getInvocation().getPreprocessorOpts()
-          .addMacroDef("__CLING__CXX11");
-      }
+    //
+    //  Buffer the error messages while we process
+    //  the compiler options.
+    //
 
-      if (CI->getDiagnostics().hasErrorOccurred())
-        return 0;
+    // Set the language options, which cling needs
+    SetClingCustomLangOpts(CI->getLangOpts());
+
+    SetPreprocessorFromBinary(PPOpts);
+
+    PPOpts.addMacroDef("__CLING__");
+    if (CI->getLangOpts().CPlusPlus11 == 1) {
+      // http://llvm.org/bugs/show_bug.cgi?id=13530
+      PPOpts.addMacroDef("__CLING__CXX11");
     }
+
+    if (CI->getDiagnostics().hasErrorOccurred())
+      return 0;
+
     CI->setTarget(TargetInfo::CreateTargetInfo(CI->getDiagnostics(),
                                                Invocation->TargetOpts));
     if (!CI->hasTarget()) {
@@ -652,20 +703,7 @@ namespace {
     }
     CI->getTarget().adjust(CI->getLangOpts());
     SetClingTargetLangOpts(CI->getLangOpts(), CI->getTarget());
-    if (CI->getTarget().getTriple().getEnvironment() == llvm::Triple::Cygnus) {
-      // clang "forgets" the basic arch part needed by winnt.h:
-      if (CI->getTarget().getTriple().getArch() == llvm::Triple::x86) {
-        CI->getInvocation().getPreprocessorOpts().addMacroDef("_X86_=1");
-      } else if (CI->getTarget().getTriple().getArch()
-                 == llvm::Triple::x86_64) {
-        CI->getInvocation().getPreprocessorOpts().addMacroDef("__x86_64=1");
-      } else {
-        llvm::errs()
-          << "Warning in cling::CIFactory::createCI():\n  "
-          "unhandled target architecture "
-          << CI->getTarget().getTriple().getArchName() << '\n';
-      }
-    }
+    SetPreprocessorFromTarget(PPOpts, CI->getTarget().getTriple());
 
     // Set up source and file managers
     CI->createFileManager();
@@ -678,6 +716,16 @@ namespace {
     // * a virtual file that is claiming to be huge
     // * with an empty memory buffer attached (to bring the content)
     FileManager& FM = SM->getFileManager();
+
+    // When asking for the input file below (which does not have a directory
+    // name), clang will call $PWD "." which is terrible if we ever change
+    // directories (see ROOT-7114). By asking for $PWD (and not ".") it will
+    // be registered as $PWD instead, which is stable even after chdirs.
+    char cwdbuf[2048];
+    const clang::DirectoryEntry* DE
+      = FM.getDirectory(getcwd_func(cwdbuf, sizeof(cwdbuf)));
+    (void)DE;
+    assert(!strcmp(DE->getName(), cwdbuf) && "Unexpected name for $PWD");
     // Build the virtual file
     const char* Filename = "InteractiveInputLineIncluder.h";
     const std::string& CGOptsMainFileName
@@ -725,7 +773,8 @@ namespace {
     CI->createSema(TU_Complete, CCC);
 
     // Set CodeGen options
-    // CI->getCodeGenOpts().DebugInfo = 1; // want debug info
+    // want debug info
+    //CI->getCodeGenOpts().setDebugInfo(clang::CodeGenOptions::FullDebugInfo);
     // CI->getCodeGenOpts().EmitDeclMetadata = 1; // For unloading, for later
     CI->getCodeGenOpts().OptimizationLevel = 0; // see pure SSA, that comes out
     CI->getCodeGenOpts().CXXCtorDtorAliases = 0; // aliasing the complete

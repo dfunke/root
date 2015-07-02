@@ -132,24 +132,7 @@ namespace {
    template <typename returnType>
    returnType sv_to(const cling::Value &val)
    {
-      QualType QT = val.getType().getDesugaredType(val.getASTContext());
-      if (QT->isMemberPointerType()) {
-         const MemberPointerType *MPT = QT->getAs<MemberPointerType>();
-         if (MPT->isMemberDataPointer()) {
-            return (returnType)(ptrdiff_t)val.getPtr();
-         }
-         return (returnType)(long) val.getPtr();
-      }
-      if (QT->isPointerType() || QT->isArrayType() || QT->isRecordType() ||
-            QT->isReferenceType()) {
-         return (returnType)(long) val.getPtr();
-      }
-      if (const EnumType *ET = dyn_cast<EnumType>(&*QT)) {
-         if (ET->getDecl()->getIntegerType()->hasSignedIntegerRepresentation())
-            return (returnType) val.getLL();
-         else
-            return (returnType) val.getULL();
-      }
+      QualType QT = val.getType().getCanonicalType();
       if (const BuiltinType *BT =
                dyn_cast<BuiltinType>(&*QT)) {
          //
@@ -239,6 +222,23 @@ namespace {
             default:
                break;
          }
+      }
+      if (QT->isPointerType() || QT->isArrayType() || QT->isRecordType() ||
+            QT->isReferenceType()) {
+         return (returnType)(long) val.getPtr();
+      }
+      if (const EnumType *ET = dyn_cast<EnumType>(&*QT)) {
+         if (ET->getDecl()->getIntegerType()->hasSignedIntegerRepresentation())
+            return (returnType) val.getLL();
+         else
+            return (returnType) val.getULL();
+      }
+      if (QT->isMemberPointerType()) {
+         const MemberPointerType *MPT = QT->getAs<MemberPointerType>();
+         if (MPT->isMemberDataPointer()) {
+            return (returnType)(ptrdiff_t)val.getPtr();
+         }
+         return (returnType)(long) val.getPtr();
       }
       Error("TClingCallFunc::sv_to", "Invalid Type!");
       QT->dump();
@@ -1031,11 +1031,13 @@ tcling_callfunc_Wrapper_t TClingCallFunc::make_wrapper()
    //
    int indent_level = 0;
    ostringstream buf;
-   buf << "__attribute__((used)) ";
-   buf << "extern \"C\" void ";
+   buf << "#pragma clang diagnostic push\n"
+      "#pragma clang diagnostic ignored \"-Wformat-security\"\n"
+      "__attribute__((used)) "
+      "extern \"C\" void ";
    buf << wrapper_name;
-   buf << "(void* obj, int nargs, void** args, void* ret)\n";
-   buf << "{\n";
+   buf << "(void* obj, int nargs, void** args, void* ret)\n"
+      "{\n";
    ++indent_level;
    if (min_args == num_params) {
       // No parameters with defaults.
@@ -1058,7 +1060,8 @@ tcling_callfunc_Wrapper_t TClingCallFunc::make_wrapper()
       }
    }
    --indent_level;
-   buf << "}\n";
+   buf << "}\n"
+      "#pragma clang diagnostic pop";
    string wrapper(buf.str());
    //fprintf(stderr, "%s\n", wrapper.c_str());
    //
@@ -1437,12 +1440,12 @@ void TClingCallFunc::exec(void *address, void *ret) const
 {
    SmallVector<ValHolder, 8> vh_ary;
    SmallVector<void *, 8> vp_ary;
-   const FunctionDecl *FD = fMethod->GetMethodDecl();
 
    unsigned num_args = fArgVals.size();
-
    {
       R__LOCKGUARD(gInterpreterMutex);
+
+      const FunctionDecl *FD = fMethod->GetMethodDecl();
 
       //
       //  Convert the arguments from cling::Value to their
@@ -1477,34 +1480,7 @@ void TClingCallFunc::exec(void *address, void *ret) const
             Ty = fArgVals[i].getType();
          }
          QualType QT = Ty.getCanonicalType();
-         if (QT->isReferenceType()) {
-            // the argument is already a pointer value (point to the same thing
-            // as the reference.
-            vp_ary.push_back((void *) sv_to_ulong_long(fArgVals[i]));
-         } else if (QT->isMemberPointerType()) {
-            ValHolder vh;
-            vh.u.vp = (void *) sv_to_ulong_long(fArgVals[i]);
-            vh_ary.push_back(vh);
-            vp_ary.push_back(&vh_ary.back());
-         } else if (QT->isPointerType() || QT->isArrayType()) {
-            ValHolder vh;
-            vh.u.vp = (void *) sv_to_ulong_long(fArgVals[i]);
-            vh_ary.push_back(vh);
-            vp_ary.push_back(&vh_ary.back());
-         } else if (QT->isRecordType()) {
-            // the argument is already a pointer value (pointing to object passed
-            // by value).
-            vp_ary.push_back((void *) sv_to_ulong_long(fArgVals[i]));
-         } else if (const EnumType *ET =
-                    dyn_cast<EnumType>(&*QT)) {
-            // Note: We may need to worry about the underlying type
-            //       of the enum here.
-            (void) ET;
-            ValHolder vh;
-            vh.u.i = (int) sv_to_long_long(fArgVals[i]);
-            vh_ary.push_back(vh);
-            vp_ary.push_back(&vh_ary.back());
-         } else if (const BuiltinType *BT =
+         if (const BuiltinType *BT =
                     dyn_cast<BuiltinType>(&*QT)) {
             //
             //  WARNING!!!
@@ -1513,7 +1489,7 @@ void TClingCallFunc::exec(void *address, void *ret) const
             //  so that the produced assembly code is optimal.
             //  Do not reorder!
             //
-         switch (BT->getKind()) {
+            switch (BT->getKind()) {
                   //
                   //  Builtin Types
                   //
@@ -1871,6 +1847,33 @@ void TClingCallFunc::exec(void *address, void *ret) const
                   }
                   break;
             }
+         } else if (QT->isReferenceType()) {
+            // the argument is already a pointer value (point to the same thing
+            // as the reference.
+            vp_ary.push_back((void *) sv_to_ulong_long(fArgVals[i]));
+         } else if (QT->isPointerType() || QT->isArrayType()) {
+            ValHolder vh;
+            vh.u.vp = (void *) sv_to_ulong_long(fArgVals[i]);
+            vh_ary.push_back(vh);
+            vp_ary.push_back(&vh_ary.back());
+         } else if (QT->isRecordType()) {
+            // the argument is already a pointer value (pointing to object passed
+            // by value).
+            vp_ary.push_back((void *) sv_to_ulong_long(fArgVals[i]));
+         } else if (const EnumType *ET =
+                    dyn_cast<EnumType>(&*QT)) {
+            // Note: We may need to worry about the underlying type
+            //       of the enum here.
+            (void) ET;
+            ValHolder vh;
+            vh.u.i = (int) sv_to_long_long(fArgVals[i]);
+            vh_ary.push_back(vh);
+            vp_ary.push_back(&vh_ary.back());
+         } else if (QT->isMemberPointerType()) {
+            ValHolder vh;
+            vh.u.vp = (void *) sv_to_ulong_long(fArgVals[i]);
+            vh_ary.push_back(vh);
+            vp_ary.push_back(&vh_ary.back());
          } else {
             Error("TClingCallFunc::exec(void*)",
                   "Invalid type (unrecognized)!");
@@ -1906,25 +1909,26 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
       exec(address, 0);
       return;
    }
-   R__LOCKGUARD_NAMED(mutex,gInterpreterMutex);
+
+   R__LOCKGUARD_NAMED(global,gInterpreterMutex);
 
    const FunctionDecl *FD = fMethod->GetMethodDecl();
-   ASTContext &Context = FD->getASTContext();
 
    if (const CXXConstructorDecl *CD = dyn_cast<CXXConstructorDecl>(FD)) {
+      ASTContext &Context = FD->getASTContext();
       const TypeDecl *TD = dyn_cast<TypeDecl>(CD->getDeclContext());
       QualType ClassTy(TD->getTypeForDecl(), 0);
       QualType QT = Context.getLValueReferenceType(ClassTy);
       *ret = cling::Value(QT, *fInterp);
       // Store the new()'ed address in getPtr()
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       exec(address, &ret->getPtr());
       return;
    }
    QualType QT = FD->getReturnType().getCanonicalType();
    if (QT->isReferenceType()) {
       *ret = cling::Value(QT, *fInterp);
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       exec(address, &ret->getPtr());
       return;
    } else if (QT->isMemberPointerType()) {
@@ -1936,24 +1940,24 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
          // But that's not relevant: we use it as a non-builtin, allocated
          // type.
          *ret = cling::Value(QT, *fInterp);
-         mutex.UnLock(); // Release lock during user function execution
+         R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
          exec(address, ret->getPtr());
          return;
       }
       // We are a function member pointer.
       *ret = cling::Value(QT, *fInterp);
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       exec(address, &ret->getPtr());
       return;
    } else if (QT->isPointerType() || QT->isArrayType()) {
       // Note: ArrayType is an illegal function return value type.
       *ret = cling::Value(QT, *fInterp);
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       exec(address, &ret->getPtr());
       return;
    } else if (QT->isRecordType()) {
       *ret = cling::Value(QT, *fInterp);
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       exec(address, ret->getPtr());
       return;
    } else if (const EnumType *ET = dyn_cast<EnumType>(&*QT)) {
@@ -1961,14 +1965,14 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
       //       of the enum here.
       (void) ET;
       *ret = cling::Value(QT, *fInterp);
-      mutex.UnLock(); // Release lock during user function execution
+      R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
       execWithLL<int>(address, QT, ret);
       return;
    } else if (const BuiltinType *BT = dyn_cast<BuiltinType>(&*QT)) {
       *ret = cling::Value(QT, *fInterp);
       switch (BT->getKind()) {
          case BuiltinType::Void:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             exec(address, 0);
             return;
             break;
@@ -1977,13 +1981,13 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             //  Unsigned Types
             //
          case BuiltinType::Bool:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<bool>(address, QT, ret);
             return;
             break;
          case BuiltinType::Char_U: // char on targets where it is unsigned
          case BuiltinType::UChar:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<char>(address, QT, ret);
             return;
             break;
@@ -1991,7 +1995,7 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             // wchar_t on targets where it is unsigned.
             // The standard doesn't allow to specify signednedd of wchar_t
             // thus this maps simply to wchar_t.
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<wchar_t>(address, QT, ret);
             return;
             break;
@@ -2006,22 +2010,22 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             return;
             break;
          case BuiltinType::UShort:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<unsigned short>(address, QT, ret);
             return;
             break;
          case BuiltinType::UInt:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<unsigned int>(address, QT, ret);
             return;
             break;
          case BuiltinType::ULong:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<unsigned long>(address, QT, ret);
             return;
             break;
          case BuiltinType::ULongLong:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithULL<unsigned long long>(address, QT, ret);
             return;
             break;
@@ -2037,7 +2041,7 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             //
          case BuiltinType::Char_S: // char on targets where it is signed
          case BuiltinType::SChar:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<signed char>(address, QT, ret);
             return;
             break;
@@ -2045,27 +2049,27 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             // wchar_t on targets where it is signed.
             // The standard doesn't allow to specify signednedd of wchar_t
             // thus this maps simply to wchar_t.
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<wchar_t>(address, QT, ret);
             return;
             break;
          case BuiltinType::Short:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<short>(address, QT, ret);
             return;
             break;
          case BuiltinType::Int:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<int>(address, QT, ret);
             return;
             break;
          case BuiltinType::Long:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<long>(address, QT, ret);
             return;
             break;
          case BuiltinType::LongLong:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             execWithLL<long long>(address, QT, ret);
             return;
             break;
@@ -2081,17 +2085,17 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
             return;
             break;
          case BuiltinType::Float:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             exec(address, &ret->getFloat());
             return;
             break;
          case BuiltinType::Double:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             exec(address, &ret->getDouble());
             return;
             break;
          case BuiltinType::LongDouble:
-            mutex.UnLock(); // Release lock during user function execution
+            R__LOCKGUARD_UNLOCK(global); // Release lock during user function execution
             exec(address, &ret->getLongDouble());
             return;
             break;
@@ -2116,7 +2120,6 @@ void TClingCallFunc::exec_with_valref_return(void *address, cling::Value *ret) c
 
 void TClingCallFunc::EvaluateArgList(const string &ArgList)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    SmallVector<Expr *, 4> exprs;
    fInterp->getLookupHelper().findArgList(ArgList, exprs,
                                           gDebug > 5 ? cling::LookupHelper::WithDiagnostics
@@ -2168,8 +2171,8 @@ T TClingCallFunc::ExecT(void *address)
       // Sometimes we are called on a function returning void!
       return 0;
    }
-   const FunctionDecl *decl = fMethod->GetMethodDecl();
-   if (decl->getReturnType().getCanonicalType()->isRecordType())
+
+   if (fReturnIsRecordType)
       ((TCling *)gCling)->RegisterTemporary(ret);
    return sv_to<T>(ret);
 }
@@ -2237,11 +2240,11 @@ void *TClingCallFunc::ExecDefaultConstructor(const TClingClassInfo *info, void *
       } else {
          wrapper = make_ctor_wrapper(info);
       }
-      if (!wrapper) {
-         Error("TClingCallFunc::ExecDefaultConstructor",
-               "Called with no wrapper, not implemented!");
-         return 0;
-      }
+   }
+   if (!wrapper) {
+      Error("TClingCallFunc::ExecDefaultConstructor",
+            "Called with no wrapper, not implemented!");
+      return 0;
    }
    void *obj = 0;
    (*wrapper)(&obj, address, nary);
@@ -2255,6 +2258,7 @@ void TClingCallFunc::ExecDestructor(const TClingClassInfo *info, void *address /
       Error("TClingCallFunc::ExecDestructor", "Invalid class info!");
       return;
    }
+
    tcling_callfunc_dtor_Wrapper_t wrapper = 0;
    {
       R__LOCKGUARD(gInterpreterMutex);
@@ -2265,11 +2269,11 @@ void TClingCallFunc::ExecDestructor(const TClingClassInfo *info, void *address /
       } else {
          wrapper = make_dtor_wrapper(info);
       }
-      if (!wrapper) {
-         Error("TClingCallFunc::ExecDestructor",
-               "Called with no wrapper, not implemented!");
-         return;
-      }
+   }
+   if (!wrapper) {
+      Error("TClingCallFunc::ExecDestructor",
+            "Called with no wrapper, not implemented!");
+      return;
    }
    (*wrapper)(address, nary, withFree);
 }
@@ -2301,14 +2305,16 @@ void *TClingCallFunc::InterfaceMethod()
    if (!IsValid()) {
       return 0;
    }
+   if (!fWrapper) {
+      const FunctionDecl *decl = fMethod->GetMethodDecl();
 
-   R__LOCKGUARD(gInterpreterMutex);
-   const FunctionDecl *decl = fMethod->GetMethodDecl();
-   map<const FunctionDecl *, void *>::iterator I = gWrapperStore.find(decl);
-   if (I != gWrapperStore.end()) {
-      fWrapper = (tcling_callfunc_Wrapper_t) I->second;
-   } else {
-      fWrapper = make_wrapper();
+      R__LOCKGUARD(gInterpreterMutex);
+      map<const FunctionDecl *, void *>::iterator I = gWrapperStore.find(decl);
+      if (I != gWrapperStore.end()) {
+         fWrapper = (tcling_callfunc_Wrapper_t) I->second;
+      } else {
+         fWrapper = make_wrapper();
+      }
    }
    return (void *)fWrapper;
 }
@@ -2328,15 +2334,19 @@ TInterpreter::CallFuncIFacePtr_t TClingCallFunc::IFacePtr()
             "Attempt to get interface while invalid.");
       return TInterpreter::CallFuncIFacePtr_t();
    }
-   R__LOCKGUARD(gInterpreterMutex);
- 
-   const FunctionDecl *decl = fMethod->GetMethodDecl();
-   map<const FunctionDecl *, void *>::iterator I =
+   if (!fWrapper) {
+      const FunctionDecl *decl = fMethod->GetMethodDecl();
+
+      R__LOCKGUARD(gInterpreterMutex);
+      map<const FunctionDecl *, void *>::iterator I =
       gWrapperStore.find(decl);
-   if (I != gWrapperStore.end()) {
-      fWrapper = (tcling_callfunc_Wrapper_t) I->second;
-   } else {
-      fWrapper = make_wrapper();
+      if (I != gWrapperStore.end()) {
+         fWrapper = (tcling_callfunc_Wrapper_t) I->second;
+      } else {
+         fWrapper = make_wrapper();
+      }
+
+      fReturnIsRecordType = decl->getReturnType().getCanonicalType()->isRecordType();
    }
    return TInterpreter::CallFuncIFacePtr_t(fWrapper);
 }
@@ -2349,7 +2359,6 @@ void TClingCallFunc::ResetArg()
 
 void TClingCallFunc::SetArg(unsigned long param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.UnsignedLongTy, *fInterp));
    fArgVals.back().getLL() = param;
@@ -2357,7 +2366,6 @@ void TClingCallFunc::SetArg(unsigned long param)
 
 void TClingCallFunc::SetArg(long param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.LongTy, *fInterp));
    fArgVals.back().getLL() = param;
@@ -2365,7 +2373,6 @@ void TClingCallFunc::SetArg(long param)
 
 void TClingCallFunc::SetArg(float param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.FloatTy, *fInterp));
    fArgVals.back().getFloat() = param;
@@ -2373,7 +2380,6 @@ void TClingCallFunc::SetArg(float param)
 
 void TClingCallFunc::SetArg(double param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.DoubleTy, *fInterp));
    fArgVals.back().getDouble() = param;
@@ -2381,7 +2387,6 @@ void TClingCallFunc::SetArg(double param)
 
 void TClingCallFunc::SetArg(long long param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.LongLongTy, *fInterp));
    fArgVals.back().getLL() = param;
@@ -2389,7 +2394,6 @@ void TClingCallFunc::SetArg(long long param)
 
 void TClingCallFunc::SetArg(unsigned long long param)
 {
-   R__LOCKGUARD(gInterpreterMutex);
    ASTContext &C = fInterp->getCI()->getASTContext();
    fArgVals.push_back(cling::Value(C.UnsignedLongLongTy, *fInterp));
    fArgVals.back().getULL() = param;
@@ -2420,10 +2424,7 @@ void TClingCallFunc::SetFunc(const TClingClassInfo *info, const char *method, co
 {
    fWrapper = 0;
    delete fMethod;
-   {
-     R__LOCKGUARD(gInterpreterMutex);
-     fMethod = new TClingMethodInfo(fInterp);
-   }
+   fMethod = new TClingMethodInfo(fInterp);
    if (poffset) {
       *poffset = 0L;
    }
@@ -2452,10 +2453,7 @@ void TClingCallFunc::SetFunc(const TClingMethodInfo *info)
 {
    fWrapper = 0;
    delete fMethod;
-   {
-     R__LOCKGUARD(gInterpreterMutex);
-     fMethod = new TClingMethodInfo(*info);
-   }
+   fMethod = new TClingMethodInfo(*info);
    ResetArg();
    if (!fMethod->IsValid()) {
       return;
@@ -2475,10 +2473,7 @@ void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *metho
 {
    fWrapper = 0;
    delete fMethod;
-   {
-      R__LOCKGUARD(gInterpreterMutex);
-      fMethod = new TClingMethodInfo(fInterp);
-   }
+   fMethod = new TClingMethodInfo(fInterp);
    if (poffset) {
       *poffset = 0L;
    }
@@ -2508,10 +2503,7 @@ void TClingCallFunc::SetFuncProto(const TClingClassInfo *info, const char *metho
                                   EFunctionMatchMode mode/*=kConversionMatch*/)
 {
    delete fMethod;
-   {
-      R__LOCKGUARD(gInterpreterMutex);
-      fMethod = new TClingMethodInfo(fInterp);
-   }
+   fMethod = new TClingMethodInfo(fInterp);
    if (poffset) {
       *poffset = 0L;
    }

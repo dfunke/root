@@ -170,6 +170,9 @@ IncrementalJIT::IncrementalJIT(IncrementalExecutor& exe,
   // Enable JIT symbol resolution from the binary.
   llvm::sys::DynamicLibrary::LoadLibraryPermanently(0, 0);
 
+  // Make debug symbols available.
+  m_GDBListener = JITEventListener::createGDBRegistrationListener();
+
 // #if MCJIT
 //   llvm::EngineBuilder builder(std::move(m));
 
@@ -234,6 +237,8 @@ size_t IncrementalJIT::addModules(std::vector<llvm::Module*>&& modules) {
 
 
 void IncrementalJIT::removeModules(size_t handle) {
+  if (handle == (size_t)-1)
+    return;
   m_LazyEmitLayer.removeModuleSet(m_UnloadPoints[handle]);
 }
 

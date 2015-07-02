@@ -8,6 +8,7 @@
 //------------------------------------------------------------------------------
 
 #include "cling/Interpreter/Interpreter.h"
+#include "ClingUtils.h"
 
 #include "cling-compiledata.h"
 #include "DynamicLookup.h"
@@ -93,10 +94,11 @@ namespace cling {
   }
 
   void Interpreter::PushTransactionRAII::pop() const {
-    if (Transaction* T
-        = m_Interpreter->m_IncrParser->endTransaction(m_Transaction)) {
-      assert(T == m_Transaction && "Ended different transaction?");
-      m_Interpreter->m_IncrParser->commitTransaction(T);
+    IncrementalParser::ParseResultTransaction PRT
+      = m_Interpreter->m_IncrParser->endTransaction(m_Transaction);
+    if (PRT.getPointer()) {
+      assert(PRT.getPointer()==m_Transaction && "Ended different transaction?");
+      m_Interpreter->m_IncrParser->commitTransaction(PRT);
     }
   }
 
@@ -199,7 +201,8 @@ namespace cling {
     DiagnosticConsumer& DClient = getCI()->getDiagnosticClient();
     DClient.BeginSourceFile(getCI()->getLangOpts(), &PP);
 
-    llvm::SmallVector<Transaction*, 2> IncrParserTransactions;
+    llvm::SmallVector<IncrementalParser::ParseResultTransaction, 2>
+      IncrParserTransactions;
     m_IncrParser->Initialize(IncrParserTransactions);
 
     handleFrontendOptions();
@@ -214,12 +217,10 @@ namespace cling {
     }
     // Commit the transactions, now that gCling is set up. It is needed for
     // static initialization in these transactions through local_cxa_atexit().
-    for (llvm::SmallVectorImpl<Transaction*>::const_iterator
-           I = IncrParserTransactions.begin(), E = IncrParserTransactions.end();
-         I != E; ++I)
-      m_IncrParser->commitTransaction(*I);
+    for (auto&& I: IncrParserTransactions)
+      m_IncrParser->commitTransaction(I);
     // Disable suggestions for ROOT
-    bool showSuggestions = !llvm::StringRef(CLING_VERSION).startswith("ROOT");
+    bool showSuggestions = !llvm::StringRef(ClingStringify(CLING_VERSION)).startswith("ROOT");
     std::unique_ptr<InterpreterCallbacks>
        AutoLoadCB(new AutoloadCallback(this, showSuggestions));
     setCallbacks(std::move(AutoLoadCB));
@@ -239,7 +240,7 @@ namespace cling {
   }
 
   const char* Interpreter::getVersion() const {
-    return CLING_VERSION;
+    return ClingStringify(CLING_VERSION);
   }
 
   void Interpreter::handleFrontendOptions() {
@@ -376,7 +377,11 @@ namespace cling {
         break;
       }
     }
-    assert(foundAtPos>-1 && "The name doesnt exist. Unbalanced store/compare");
+    if (foundAtPos < 0) {
+      llvm::errs() << "The store point name " << name << " does not exist."
+      "Unbalanced store / compare\n";
+      return;
+    }
 
     // This may induce deserialization
     PushTransactionRAII RAII(this);
@@ -634,14 +639,12 @@ namespace cling {
 
   Interpreter::CompilationResult Interpreter::emitAllDecls(Transaction* T) {
     assert(!isInSyntaxOnlyMode() && "No CodeGenerator?");
+    m_IncrParser->emitTransaction(T);
     m_IncrParser->addTransaction(T);
     m_IncrParser->markWholeTransactionAsUsed(T);
-    m_IncrParser->commitTransaction(T);
+    T->setState(Transaction::kCollecting);
+    m_IncrParser->commitTransaction(m_IncrParser->endTransaction(T));
 
-    // The static initializers might run anything and can thus cause more
-    // decls that need to end up in a transaction. But this one is done
-    // with CodeGen...
-    T->setState(Transaction::kCommitted);
     if (executeTransaction(*T))
       return Interpreter::kSuccess;
 
@@ -935,18 +938,13 @@ namespace cling {
                                Transaction** T /* = 0 */) const {
     StateDebuggerRAII stateDebugger(this);
 
-    if (Transaction* lastT = m_IncrParser->Compile(input, CO)) {
-      if (lastT->getIssuedDiags() != Transaction::kErrors) {
-        if (T)
-          *T = lastT;
-        return Interpreter::kSuccess;
-      }
+    IncrementalParser::ParseResultTransaction PRT
+      = m_IncrParser->Compile(input, CO);
+    if (PRT.getInt() == IncrementalParser::kFailed)
       return Interpreter::kFailure;
-    }
 
-    // Even if the transaction was empty it can still be a success.
-    if (getCI()->getDiagnostics().hasErrorOccurred())
-      return Interpreter::kFailure;
+    if (T)
+      *T = PRT.getPointer();
     return Interpreter::kSuccess;
   }
 
@@ -966,36 +964,47 @@ namespace cling {
     // non-default C++ at the prompt:
     CO.IgnorePromptDiags = 1;
 
-    if (Transaction* lastT = m_IncrParser->Compile(Wrapper, CO)) {
-
+    IncrementalParser::ParseResultTransaction PRT
+      = m_IncrParser->Compile(Wrapper, CO);
+    Transaction* lastT = PRT.getPointer();
+    if (lastT && lastT->getState() != Transaction::kCommitted) {
       assert((lastT->getState() == Transaction::kCommitted
               || lastT->getState() == Transaction::kRolledBack
               || lastT->getState() == Transaction::kRolledBackWithErrors)
              && "Not committed?");
+      if (V)
+        *V = Value();
+      return kFailure;
+    }
 
-      if (lastT->getIssuedDiags() == Transaction::kErrors
-          || lastT->getState() != Transaction::kCommitted) {
-         if (V)
-            *V = Value();
+    // Might not have a Transaction
+    if (PRT.getInt() == IncrementalParser::kFailed) {
+      if (V)
+        *V = Value();
+      return kFailure;
+    }
 
-         return Interpreter::kFailure;
-      }
+    if (!lastT) {
+      // Empty transactions are good, too!
+      if (V)
+        *V = Value();
+      return kSuccess;
+    }
 
-      Value resultV;
-      if (!V)
-         V = &resultV;
-      if (!lastT->getWrapperFD()) // no wrapper to run
-         return Interpreter::kSuccess;
-      else if (RunFunction(lastT->getWrapperFD(), V) < kExeFirstError){
-         if (lastT->getCompilationOpts().ValuePrinting
-             != CompilationOptions::VPDisabled
-             && V->isValid()
-             // the !V->needsManagedAllocation() case is handled by
-             // dumpIfNoStorage.
-             && V->needsManagedAllocation())
-            V->dump();
-         return Interpreter::kSuccess;
-      }
+    Value resultV;
+    if (!V)
+      V = &resultV;
+    if (!lastT->getWrapperFD()) // no wrapper to run
+      return Interpreter::kSuccess;
+    else if (RunFunction(lastT->getWrapperFD(), V) < kExeFirstError){
+      if (lastT->getCompilationOpts().ValuePrinting
+          != CompilationOptions::VPDisabled
+          && V->isValid()
+          // the !V->needsManagedAllocation() case is handled by
+          // dumpIfNoStorage.
+          && V->needsManagedAllocation())
+        V->dump();
+      return Interpreter::kSuccess;
     }
     return Interpreter::kSuccess;
   }
@@ -1123,14 +1132,17 @@ namespace cling {
 
 
   void Interpreter::enableDynamicLookup(bool value /*=true*/) {
-    m_DynamicLookupEnabled = value;
-
-    if (!m_DynamicLookupDeclared && isDynamicLookupEnabled()) {
-     if (loadModuleForHeader("cling/Interpreter/DynamicLookupRuntimeUniverse.h")
-         != kSuccess)
+    if (!m_DynamicLookupDeclared && value) {
+      // No dynlookup for the dynlookup header!
+      m_DynamicLookupEnabled = false;
+      if (loadModuleForHeader("cling/Interpreter/DynamicLookupRuntimeUniverse.h")
+          != kSuccess)
       declare("#include \"cling/Interpreter/DynamicLookupRuntimeUniverse.h\"");
     }
     m_DynamicLookupDeclared = true;
+
+    // Enable it *after* parsing the headers.
+    m_DynamicLookupEnabled = value;
   }
 
   Interpreter::ExecutionResult
@@ -1147,10 +1159,6 @@ namespace cling {
       // anyone except for IncrementalParser.
       ExeRes = m_Executor->runStaticInitializersOnce(T);
     }
-
-    // Reset the module builder to clean up global initializers, c'tors, d'tors
-    ASTContext& C = getCI()->getASTContext();
-    m_IncrParser->getCodeGenerator()->HandleTranslationUnit(C);
 
     return ConvertExecutionResult(ExeRes);
   }
@@ -1217,10 +1225,12 @@ namespace cling {
 
 
     std::string includeFile = std::string("#include \"") + inFile.str() + "\"";
-    cling::Transaction* T = fwdGen.m_IncrParser->Parse(includeFile , CO);
+    IncrementalParser::ParseResultTransaction PRT
+      = fwdGen.m_IncrParser->Parse(includeFile, CO);
+    cling::Transaction* T = PRT.getPointer();
 
     // If this was already #included we will get a T == 0.
-    if (!T)
+    if (PRT.getInt() == IncrementalParser::kFailed || !T)
       return;
 
     std::error_code EC;

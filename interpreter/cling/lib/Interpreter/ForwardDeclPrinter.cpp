@@ -7,6 +7,7 @@
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
+#include "clang/AST/Expr.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/Type.h"
 #include "clang/Lex/Preprocessor.h"
@@ -149,7 +150,7 @@ namespace cling {
     return Out();
   }
 
-  void ForwardDeclPrinter::prettyPrintAttributes(Decl *D, std::string extra) {
+  void ForwardDeclPrinter::prettyPrintAttributes(Decl *D) {
 
     if (D->getSourceRange().isInvalid())
       return;
@@ -200,8 +201,6 @@ namespace cling {
 //    assert ( file.length() != 0 && "Filename Should not be blank");
     Out() << " __attribute__((annotate(\"$clingAutoload$"
           << llvm::StringRef(includeText, includeEnd - includeText);
-    if (!extra.empty())
-      Out() << " " << extra;
     Out() << "\"))) ";
   }
 
@@ -265,7 +264,7 @@ namespace cling {
     if (!m_Policy.SuppressSpecifiers && D->isModulePrivate())
       Out() << "__module_private__ ";
     Out() << "enum ";
-    prettyPrintAttributes(D,std::to_string(D->isFixed()));
+    prettyPrintAttributes(D);
     if (D->isScoped()) {
       if (D->isScopedUsingClassTag())
         Out() << "class ";
@@ -1099,10 +1098,15 @@ namespace cling {
       VisitTemplateName(TA.getAsTemplateOrTemplatePattern());
       break;
     case clang::TemplateArgument::Expression:
-      if (DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(TA.getAsExpr())) {
-        Visit(DRE->getFoundDecl());
-        if (m_SkipFlag) {
-          return;
+      {
+        Expr* TAExpr = TA.getAsExpr();
+        if (CastExpr* CastExpr = dyn_cast<clang::CastExpr>(TAExpr))
+          TAExpr = CastExpr->getSubExpr();
+        if (DeclRefExpr* DRE = dyn_cast<DeclRefExpr>(TAExpr)) {
+          Visit(DRE->getFoundDecl());
+          if (m_SkipFlag) {
+            return;
+          }
         }
       }
       break;

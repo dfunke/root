@@ -63,6 +63,7 @@ namespace ROOT {
       class TNormalizedCtxt;
    }
 }
+#include "RStringView.h"
 
 // TClassEdit is used to manipulate class and type names.
 //
@@ -84,21 +85,38 @@ namespace TClassEdit {
       kLong64           = 1<<8, /* replace all 'long long' with Long64_t. */
       kDropStd          = 1<<9, /* Drop any std:: */
       kKeepOuterConst   = 1<<10,/* Make sure to keep the const keyword even outside the template parameters */
-      kResolveTypedef   = 1<<11 /* Strip all typedef except Double32_t and co. */
+      kResolveTypedef   = 1<<11,/* Strip all typedef except Double32_t and co. */
+      kDropPredicate    = 1<<12,/* Drop the predicate if applies to the collection */
+      kDropHash         = 1<<13 /* Drop the hash if applies to the collection */
    };
 
    enum ESTLType {
-      kNotSTL   = ROOT::kNotSTL,
-      kVector   = ROOT::kSTLvector,
-      kList     = ROOT::kSTLlist,
-      kDeque    = ROOT::kSTLdeque,
-      kMap      = ROOT::kSTLmap,
-      kMultiMap = ROOT::kSTLmultimap,
-      kSet      = ROOT::kSTLset,
-      kMultiSet = ROOT::kSTLmultiset,
-      kBitSet   = ROOT::kSTLbitset,
-      kEnd      = ROOT::kSTLend
+      kNotSTL            = ROOT::kNotSTL,
+      kVector            = ROOT::kSTLvector,
+      kList              = ROOT::kSTLlist,
+      kForwardist        = ROOT::kSTLforwardlist,
+      kDeque             = ROOT::kSTLdeque,
+      kMap               = ROOT::kSTLmap,
+      kMultiMap          = ROOT::kSTLmultimap,
+      kSet               = ROOT::kSTLset,
+      kMultiSet          = ROOT::kSTLmultiset,
+      kUnorderedSet      = ROOT::kSTLunorderedset,
+      kUnorderedMultiSet = ROOT::kSTLunorderedmultiset,
+      kUnorderedMap      = ROOT::kSTLunorderedmap,
+      kUnorderedMultiMap = ROOT::kSTLunorderedmultimap,
+      kBitSet            = ROOT::kSTLbitset,
+      kEnd               = ROOT::kSTLend
    };
+
+   enum class EComplexType : short {
+      kNone,
+      kDouble,
+      kFloat,
+      kInt,
+      kLong
+   };
+
+   EComplexType GetComplexType(const char*);
 
    class TInterpreterLookupHelper {
    public:
@@ -138,21 +156,25 @@ namespace TClassEdit {
    bool        IsDefAlloc(const char *alloc, const char *classname);
    bool        IsDefAlloc(const char *alloc, const char *keyclassname, const char *valueclassname);
    bool        IsDefComp (const char *comp , const char *classname);
+   bool        IsDefPred(const char *predname, const char *classname);
+   bool        IsDefHash(const char *hashname, const char *classname);
    bool        IsInterpreterDetail(const char *type);
    bool        IsSTLBitset(const char *type);
-   ROOT::ESTLType IsSTLCont (const char *type);
+   ROOT::ESTLType UnderlyingIsSTLCont(std::string_view type);
+   ROOT::ESTLType IsSTLCont (std::string_view type);
    int         IsSTLCont (const char *type,int testAlloc);
    bool        IsStdClass(const char *type);
    bool        IsVectorBool(const char *name);
-   void        GetNormalizedName(std::string &norm_name,const char *name);
+   void        GetNormalizedName(std::string &norm_name,std::string_view name);
    std::string GetLong64_Name(const char *original);
    std::string GetLong64_Name(const std::string& original);
    int         GetSplit  (const char *type, std::vector<std::string> &output, int &nestedLoc, EModType mode = TClassEdit::kNone);
-   ROOT::ESTLType STLKind   (const char *type, size_t len = 0);    //Kind of stl container
+   ROOT::ESTLType STLKind(std::string_view type);    //Kind of stl container
    int         STLArgs   (int kind);            //Min number of arguments without allocator
    std::string ResolveTypedef(const char *tname, bool resolveAll = false);
    std::string ShortType (const char *typeDesc, int mode);
    std::string InsertStd(const char *tname);
+   const char* GetUnqualifiedName(const char*name);
    inline char* DemangleName(const char* mangled_name, int& errorCode)
    {
    // Demangle in a portable way the name.

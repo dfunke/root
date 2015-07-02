@@ -179,16 +179,19 @@ private:
    // of the replacement, fPersistentRef points to the new TClass object.
    std::atomic<TClass**> fPersistentRef;//!Persistent address of pointer to this TClass object and its successors.
 
+   typedef std::atomic<std::map<std::string, TObjArray*>*> ConvSIMap_t;
 
-   mutable TObjArray *fStreamerInfo;    //Array of TVirtualStreamerInfo
-   mutable std::atomic<std::map<std::string, TObjArray*>*> fConversionStreamerInfo; //Array of the streamer infos derived from another class.
-   TList             *fRealData;        //linked list for persistent members including base classes
-   TList             *fBase;            //linked list for base classes
-   TListOfDataMembers*fData;            //linked list for data members
-   TListOfEnums      *fEnums;           //linked list for the enums
-   TListOfFunctionTemplates *fFuncTemplate; //linked list for function templates [Not public until implemented as active list]
-   std::atomic<TListOfFunctions*> fMethod;          //linked list for methods
-   TViewPubDataMembers*fAllPubData;      //all public data members (including from base classes)
+   mutable TObjArray  *fStreamerInfo;           //Array of TVirtualStreamerInfo
+   mutable ConvSIMap_t fConversionStreamerInfo; //Array of the streamer infos derived from another class.
+   TList              *fRealData;        //linked list for persistent members including base classes
+   TList              *fBase;            //linked list for base classes
+   TListOfDataMembers *fData;            //linked list for data members
+
+   std::atomic<TListOfEnums*> fEnums;        //linked list for the enums
+   TListOfFunctionTemplates  *fFuncTemplate; //linked list for function templates [Not public until implemented as active list]
+   std::atomic<TListOfFunctions*> fMethod;   //linked list for methods
+
+   TViewPubDataMembers*fAllPubData;     //all public data members (including from base classes)
    TViewPubFunctions *fAllPubMethod;    //all public methods (including from base classes)
    mutable TList     *fClassMenuList;   //list of class menu items
 
@@ -221,6 +224,7 @@ private:
    ROOT::DesFunc_t     fDestructor;     //pointer to a function call an object's destructor.
    ROOT::DirAutoAdd_t  fDirAutoAdd;     //pointer which implements the Directory Auto Add feature for this class.']'
    ClassStreamerFunc_t fStreamerFunc;   //Wrapper around this class custom Streamer member function.
+   ClassConvStreamerFunc_t fConvStreamerFunc;   //Wrapper around this class custom conversion Streamer member function.
    Int_t               fSizeof;         //Sizeof the class.
 
            Int_t      fCanSplit;          //!Indicates whether this class can be split or not.
@@ -241,8 +245,12 @@ private:
    TVirtualRefProxy  *fRefProxy;        //!Pointer to reference proxy if this class represents a reference
    ROOT::TSchemaRuleSet *fSchemaRules;  //! Schema evolution rules
 
-   typedef void (TClass::*StreamerImpl_t)(void *obj, TBuffer &b, const TClass *onfile_class) const;
-   mutable StreamerImpl_t fStreamerImpl;//! Pointer to the function implementing the right streaming behavior for the class represented by this object.
+   typedef void (*StreamerImpl_t)(const TClass* pThis, void *obj, TBuffer &b, const TClass *onfile_class);
+#ifdef R__NO_ATOMIC_FUNCTION_POINTER
+   mutable StreamerImpl_t fStreamerImpl;  //! Pointer to the function implementing the right streaming behavior for the class represented by this object.
+#else
+   mutable std::atomic<StreamerImpl_t> fStreamerImpl;  //! Pointer to the function implementing the right streaming behavior for the class represented by this object.
+#endif
 
    TListOfFunctions  *GetMethodList();
    TMethod           *GetClassMethod(Long_t faddr);
@@ -267,13 +275,14 @@ private:
    void SetStreamerImpl();
 
    // Various implementation for TClass::Stramer
-   void StreamerExternal(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerTObject(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerTObjectInitialized(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerTObjectEmulated(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerInstrumented(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerStreamerInfo(void *object, TBuffer &b, const TClass *onfile_class) const;
-   void StreamerDefault(void *object, TBuffer &b, const TClass *onfile_class) const;
+   static void StreamerExternal(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerTObject(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerTObjectInitialized(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerTObjectEmulated(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerInstrumented(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void ConvStreamerInstrumented(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerStreamerInfo(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
+   static void StreamerDefault(const TClass* pThis, void *object, TBuffer &b, const TClass *onfile_class);
 
    static IdMap_t    *GetIdMap();       //Map from typeid to TClass pointer
    static DeclIdMap_t *GetDeclIdMap();  //Map from DeclId_t to TClass pointer
@@ -407,6 +416,7 @@ public:
    TClass            *GetBaseClass(const TClass *base);
    Int_t              GetBaseClassOffset(const TClass *toBase, void *address = 0, bool isDerivedObject = true);
    TClass            *GetBaseDataMember(const char *datamember);
+   ROOT::ESTLType     GetCollectionType() const;
    ROOT::DirAutoAdd_t GetDirectoryAutoAdd() const;
    TFunctionTemplate *GetFunctionTemplate(const char *name);
    UInt_t             GetInstanceCount() const { return fInstanceCount; }
@@ -437,6 +447,7 @@ public:
    EState             GetState() const { return fState; }
    TClassStreamer    *GetStreamer() const;
    ClassStreamerFunc_t GetStreamerFunc() const;
+   ClassConvStreamerFunc_t GetConvStreamerFunc() const;
    const TObjArray          *GetStreamerInfos() const { return fStreamerInfo; }
    TVirtualStreamerInfo     *GetStreamerInfo(Int_t version=0) const;
    TVirtualStreamerInfo     *GetStreamerInfoAbstractEmulated(Int_t version=0) const;
@@ -501,6 +512,7 @@ public:
    void               AdoptMemberStreamer(const char *name, TMemberStreamer *strm);
    void               SetMemberStreamer(const char *name, MemberStreamerFunc_t strm);
    void               SetStreamerFunc(ClassStreamerFunc_t strm);
+   void               SetConvStreamerFunc(ClassConvStreamerFunc_t strm);
 
    // Function to retrieve the TClass object and dictionary function
    static void           AddClass(TClass *cl);
@@ -532,7 +544,12 @@ public:
    inline void        Streamer(void *obj, TBuffer &b, const TClass *onfile_class = 0) const
    {
       // Inline for performance, skipping one function call.
-      (this->*fStreamerImpl)(obj,b,onfile_class);
+#ifdef R__NO_ATOMIC_FUNCTION_POINTER
+      fStreamerImpl(this,obj,b,onfile_class);
+#else
+      auto t = fStreamerImpl.load();
+      t(this,obj,b,onfile_class);
+#endif
    }
 
    ClassDef(TClass,0)  //Dictionary containing class information

@@ -32,6 +32,7 @@
 #include "TClingTypeInfo.h"
 #include "TError.h"
 #include "TMetaUtils.h"
+#include "ThreadLocalStorage.h"
 
 #include "cling/Interpreter/Interpreter.h"
 #include "cling/Interpreter/LookupHelper.h"
@@ -705,6 +706,7 @@ bool TClingClassInfo::HasDefaultConstructor() const
 
 bool TClingClassInfo::HasMethod(const char *name) const
 {
+   R__LOCKGUARD(gInterpreterMutex);
    if (IsLoaded() && !llvm::isa<EnumDecl>(fDecl)) {
       return fInterp->getLookupHelper()
          .hasFunction(fDecl, name,
@@ -992,18 +994,21 @@ void *TClingClassInfo::New(const ROOT::TMetaUtils::TNormalizedCtxt &normCtxt) co
             FullyQualifiedName(fDecl).c_str());
       return 0;
    }
-   const CXXRecordDecl* RD = dyn_cast<CXXRecordDecl>(fDecl);
-   if (!RD) {
-      Error("TClingClassInfo::New()", "This is a namespace!: %s",
-            FullyQualifiedName(fDecl).c_str());
-      return 0;
-   }
-   if (!HasDefaultConstructor()) {
-      // FIXME: We fail roottest root/io/newdelete if we issue this message!
-      //Error("TClingClassInfo::New()", "Class has no default constructor: %s",
-      //      FullyQualifiedName(fDecl).c_str());
-      return 0;
-   }
+   {
+      R__LOCKGUARD(gInterpreterMutex);
+      const CXXRecordDecl* RD = dyn_cast<CXXRecordDecl>(fDecl);
+      if (!RD) {
+         Error("TClingClassInfo::New()", "This is a namespace!: %s",
+               FullyQualifiedName(fDecl).c_str());
+         return 0;
+      }
+      if (!HasDefaultConstructor()) {
+         // FIXME: We fail roottest root/io/newdelete if we issue this message!
+         //Error("TClingClassInfo::New()", "Class has no default constructor: %s",
+         //      FullyQualifiedName(fDecl).c_str());
+         return 0;
+      }
+   } // End of Lock section.
    void* obj = 0;
    TClingCallFunc cf(fInterp,normCtxt);
    obj = cf.ExecDefaultConstructor(this, /*address=*/0, /*nary=*/0);
@@ -1044,7 +1049,7 @@ void *TClingClassInfo::New(int n, const ROOT::TMetaUtils::TNormalizedCtxt &normC
          // FIXME: We fail roottest root/io/newdelete if we issue this message!
          //Error("TClingClassInfo::New(n)",
          //      "Class has no default constructor: %s",
-      //      FullyQualifiedName(fDecl).c_str());
+         //      FullyQualifiedName(fDecl).c_str());
          return 0;
       }
    } // End of Lock section.
@@ -1283,11 +1288,8 @@ const char *TClingClassInfo::Name() const
       return 0;
    }
    // Note: This *must* be static/thread_local because we are returning a pointer inside it!
-#ifdef R__WIN32
-   static std::string buf;
-#else
-   thread_local std::string buf;
-#endif
+   TTHREAD_TLS_DECL( std::string, buf);
+
    buf.clear();
    if (const NamedDecl* ND = llvm::dyn_cast<NamedDecl>(fDecl)) {
       PrintingPolicy Policy(fDecl->getASTContext().getPrintingPolicy());
@@ -1346,11 +1348,7 @@ const char *TClingClassInfo::TmpltName() const
    R__LOCKGUARD(gInterpreterMutex);
 
    // Note: This *must* be static/thread_local because we are returning a pointer inside it!
-#ifdef R__WIN32
-   static std::string buf;
-#else
-   thread_local std::string buf;
-#endif
+   TTHREAD_TLS_DECL( std::string, buf);
    buf.clear();
    if (const NamedDecl* ND = llvm::dyn_cast<NamedDecl>(fDecl)) {
       // Note: This does *not* include the template arguments!

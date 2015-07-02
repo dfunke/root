@@ -14,14 +14,10 @@
 
    JSROOT = {};
 
-   JSROOT.version = "3.3 25/02/2015";
+   JSROOT.version = "3.6 1/07/2015";
 
    JSROOT.source_dir = "";
-
-   // TODO: all jQuery-related functions should go into extra script
-   JSROOT.clone = function(obj) {
-      return jQuery.extend(true, {}, obj);
-   }
+   JSROOT.source_min = false;
 
    JSROOT.id_counter = 0;
 
@@ -37,6 +33,8 @@
    JSROOT.browser.isWebKit = JSROOT.browser.isChrome || JSROOT.browser.isSafari;
 
    JSROOT.function_list = []; // do we really need it here?
+
+   JSROOT.MathJax = 0; // indicate usage of mathjax 0 - off, 1 - on
 
    JSROOT.BIT = function(n) { return 1 << (n); }
 
@@ -69,6 +67,12 @@
          kDecimals      : JSROOT.BIT(11)
    };
 
+   // wrapper for console.log, avoids missing console in IE
+   JSROOT.console = function(value) {
+     if ((typeof console != 'undefined') && (typeof console.log == 'function'))
+        console.log(value);
+   }
+
    // This is part of the JSON-R code, found on
    // https://github.com/graniteds/jsonr
    // Only unref part was used, arrays are not accounted as objects
@@ -83,7 +87,6 @@
              c = parseInt(value.substr(5));
              if (!isNaN(c) && (c < dy.length)) {
                 value = dy[c];
-                // console.log("replace index " + c + "  name = " + value.fName);
              }
           }
           break;
@@ -99,7 +102,6 @@
 
                // account only objects in ref table
                if (dy.indexOf(value) === -1) {
-                  //if (dy.length<10) console.log("Add object " + value._typename + "  $ref:" + dy.length);
                   dy.push(value);
                }
 
@@ -110,7 +112,6 @@
                ks = Object.keys(value);
                for (i = 0; i < ks.length; i++) {
                   k = ks[i];
-                  //if (dy.length<10) console.log("Check field " + k);
                   value[k] = JSROOT.JSONR_unref(value[k], dy);
                }
             }
@@ -119,6 +120,51 @@
       }
 
       return value;
+   }
+
+   JSROOT.debug = 0;
+
+   // This should be similar to the jQuery.extend method
+   // Just copy (not clone) all fields from source to the target object
+   JSROOT.extend = function(tgt, src, map) {
+      if (!map) map = { obj:[], clones:[] };
+
+      if (typeof src != 'object') return src;
+
+      if (src == null) return null;
+
+      var i = map.obj.indexOf(src);
+      if (i>=0) return map.clones[i];
+
+      // process array
+      if (Object.prototype.toString.apply(src) === '[object Array]') {
+         if ((tgt==null) || (Object.prototype.toString.apply(tgt) != '[object Array]')) {
+            tgt = [];
+            map.obj.push(src);
+            map.clones.push(tgt);
+         }
+
+         for (i = 0; i < src.length; i++)
+            tgt.push(JSROOT.extend(null, src[i], map));
+
+         return tgt;
+      }
+
+      if ((tgt==null) || (typeof tgt != 'object')) {
+         tgt = {};
+         map.obj.push(src);
+         map.clones.push(tgt);
+      }
+
+      for (var k in src)
+         tgt[k] = JSROOT.extend(tgt[k], src[k], map);
+
+      return tgt;
+   }
+
+   // Instead of jquery use JSROOT.extend function
+   JSROOT.clone = function(obj) {
+      return JSROOT.extend(null, obj);
    }
 
    JSROOT.parse = function(arg) {
@@ -139,7 +185,7 @@
       if (!url) url = document.URL;
 
       var pos = url.indexOf("?");
-      if (pos<0) return null;
+      if (pos<0) return dflt;
       url = url.slice(pos+1);
 
       while (url.length>0) {
@@ -224,17 +270,24 @@
    JSROOT.CallBack = function(func, arg1, arg2) {
       // generic method to invoke callback function
       // func either normal function or container like
-      // { obj: _ object_pointer_, func: name of method to call }
+      // { obj: object_pointer, func: name of method to call }
+      // { _this: object pointer, func: function to call }
       // arg1, arg2 are optional arguments of the callback
 
-      if (func==null) return;
+      if (func == null) return;
 
       if (typeof func == 'string') func = JSROOT.findFunction(func);
 
       if (typeof func == 'function') return func(arg1,arg2);
 
-      if (typeof func == 'object' && typeof func.obj == 'object' &&
-         typeof func.func == 'string' && typeof func.obj[func.func] == 'function') return func.obj[func.func](arg1, arg2);
+      if (typeof func != 'object') return;
+
+      if (('obj' in func) && ('func' in func) &&
+         (typeof func.obj == 'object') && (typeof func.func == 'string') &&
+         (typeof func.obj[func.func] == 'function')) return func.obj[func.func](arg1, arg2);
+
+      if (('_this' in func) && ('func' in func) &&
+         (typeof func.func == 'function')) return func.func.call(func._this, arg1, arg2);
    }
 
    JSROOT.NewHttpRequest = function(url, kind, user_call_back) {
@@ -247,20 +300,19 @@
       //  "xml" - returns res.responseXML
       //  "head" - returns request itself, uses "HEAD" method
       // Result will be returned to the callback functions
+      // Request will be set as this pointer in the callback
       // If failed, request returns null
-
-      function callback(res) {
-         if (typeof user_call_back == 'function') user_call_back(res);
-      }
 
       var xhr = new XMLHttpRequest();
 
-//      if (typeof ActiveXObject == "function") {
+      function callback(res) {
+         // we set pointer on request when calling callback
+         if (typeof user_call_back == 'function') user_call_back.call(xhr, res);
+      }
+
       if (window.ActiveXObject) {
-         // console.log(" Create IE request");
 
          xhr.onreadystatechange = function() {
-            // console.log(" Ready IE request");
             if (xhr.readyState != 4) return;
 
             if (xhr.status != 200 && xhr.status != 206) {
@@ -362,7 +414,7 @@
          if (debugout)
             document.getElementById(debugout).innerHTML = str;
          else
-            console.log(str);
+            JSROOT.console(str);
       }
 
       function completeLoad() {
@@ -402,10 +454,7 @@
             var href = styles[n]['href'];
             if ((href == null) || (href.length == 0)) continue;
 
-            if (href.indexOf(filename)>=0) {
-               console.log("style "+  filename + " already loaded");
-               return completeLoad();
-            }
+            if (href.indexOf(filename)>=0) return completeLoad();
          }
 
       } else {
@@ -419,7 +468,6 @@
 
             if ((src.indexOf(filename)>=0) && (src.indexOf("load=")<0)) {
                // avoid wrong decision when script name is specified as more argument
-               // debug("script "+  filename + " already loaded src = " + src);
                return completeLoad();
             }
          }
@@ -439,7 +487,7 @@
       } else {
          element = document.createElement("script");
          element.setAttribute('type', "text/javascript");
-         element.setAttribute('src', filename);//+ "?r=" + rnd;
+         element.setAttribute('src', filename);
       }
 
       if (element.readyState) { // Internet Explorer specific
@@ -459,55 +507,127 @@
       document.getElementsByTagName("head")[0].appendChild(element);
    }
 
-   JSROOT.AssertPrerequisites = function(kind, andThan, debugout) {
+   JSROOT.doing_assert = null; // array where all requests are collected
+   JSROOT.load_jquery = null;  // variable indicates if jquery was loaded
+
+   JSROOT.AssertPrerequisites = function(kind, callback, debugout) {
       // one could specify kind of requirements
       // 'io' for I/O functionality (default)
       // '2d' for 2d graphic
+      // 'jq' jQuery and jQuery-ui
+      // 'jq2d' jQuery-dependend part of 2d graphic
       // '3d' for 3d graphic
       // 'simple' for basic user interface
       // 'load:' list of user-specific scripts at the end of kind string
 
-      if (typeof kind == 'function') { andThan = kind; kind = null; }
+      if ((typeof kind != 'string') || (kind == ''))
+         return JSROOT.CallBack(callback);
 
-      if (typeof kind != 'string') kind = "2d";
-      if (kind.charAt(kind.length-1)!=";") kind+=";";
-
-      // file names should be separated with ';'
-      var allfiles = '$$$scripts/jquery.min.js';
-
-      if (kind.indexOf('io;')>=0)
-         allfiles += ";$$$scripts/rawinflate.js" +
-                     ";$$$scripts/JSRootIOEvolution.js";
-
-      if (kind.indexOf('2d;')>=0) {
-         allfiles += ';$$$style/jquery-ui.css' +
-                     ';$$$scripts/jquery-ui.min.js' +
-                     ';$$$scripts/d3.v3.min.js' +
-                     ';$$$scripts/JSRootPainter.js' +
-                     ';$$$style/JSRootPainter.css';
-         if (JSROOT.touches)
-            allfiles += ';$$$scripts/touch-punch.min.js';
+      if (kind=='shift') {
+         var req = JSROOT.doing_assert.shift();
+         kind = req._kind;
+         callback = req._callback;
+         debugout = req._debug;
+      } else
+      if (JSROOT.doing_assert != null) {
+         // if function already called, store request
+         return JSROOT.doing_assert.push({_kind:kind, _callback:callback, _debug: debugout});
+      } else {
+         JSROOT.doing_assert = [];
       }
 
-      if (kind.indexOf("3d;")>=0)
-         allfiles += ";$$$scripts/jquery.mousewheel.js" +
-                     ";$$$scripts/three.min.js" +
-                     ";$$$scripts/helvetiker_regular.typeface.js" +
-                     ";$$$scripts/helvetiker_bold.typeface.js" +
-                     ";$$$scripts/JSRoot3DPainter.js";
+      if (kind.charAt(kind.length-1)!=";") kind+=";";
 
-      if (kind.indexOf("mathjax;")>=0)
-        allfiles += ";https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML";
+      var ext = JSROOT.source_min ? ".min" : "";
 
-      if (kind.indexOf("simple;")>=0)
-         allfiles += ';$$$scripts/JSRootInterface.js' +
-                     ';$$$style/JSRootInterface.css';
+      var need_jquery = false;
+
+      // file names should be separated with ';'
+      var allfiles = '';
+
+      if (kind.indexOf('io;')>=0)
+         allfiles += "$$$scripts/rawinflate" + ext + ".js;" +
+                     "$$$scripts/JSRootIOEvolution" + ext + ".js;";
+
+      if (kind.indexOf('2d;')>=0) {
+         if (typeof d3 != 'undefined')
+            JSROOT.console('Reuse existing d3.js ' + d3.version + ", required 3.4.10");
+         else
+            allfiles += '$$$scripts/d3.v3.min.js;';
+         allfiles += '$$$scripts/JSRootPainter' + ext + ".js;" +
+                     '$$$style/JSRootPainter' + ext + ".css;";
+      }
+
+      if (kind.indexOf('jq;')>=0) need_jquery = true;
+
+      if (kind.indexOf('jq2d;')>=0) {
+         allfiles += '$$$scripts/JSRootPainter.jquery' + ext + ".js;";
+         need_jquery = true;
+      }
+
+      if (kind.indexOf("3d;")>=0) {
+         need_jquery = true;
+         allfiles += "$$$scripts/jquery.mousewheel" + ext + ".js;" +
+                     "$$$scripts/three.min.js;" +
+                     "$$$scripts/helvetiker_regular.typeface.js;" +
+                     "$$$scripts/helvetiker_bold.typeface.js;" +
+                     "$$$scripts/JSRoot3DPainter" + ext + ".js;";
+      }
+
+      if (kind.indexOf("mathjax;")>=0) {
+         if (typeof MathJax == 'undefined') {
+            allfiles += "https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_SVG," +
+                         JSROOT.source_dir + "scripts/mathjax_config.js;";
+         }
+         if (JSROOT.MathJax == 0) JSROOT.MathJax = 1;
+      }
+
+      if (kind.indexOf("simple;")>=0) {
+         need_jquery = true;
+         allfiles += '$$$scripts/JSRootInterface' + ext + ".js;" +
+                     '$$$style/JSRootInterface' + ext + ".css;";
+      }
+
+      if (need_jquery && (JSROOT.load_jquery==null)) {
+         var has_jq = (typeof jQuery != 'undefined'), lst_jq = "";
+
+         if (has_jq)
+            JSROOT.console('Reuse existing jQuery ' + jQuery.fn.jquery + ", required 2.1.1");
+         else
+            lst_jq += "$$$scripts/jquery.min.js;";
+         if (has_jq && typeof $.ui != 'undefined')
+            JSROOT.console('Reuse existing jQuery-ui ' + $.ui.version + ", required 1.11.0");
+         else
+            lst_jq += '$$$style/jquery-ui.css;$$$scripts/jquery-ui.min.js;';
+
+         allfiles = lst_jq + allfiles;
+         if (JSROOT.touches)
+            allfiles += '$$$scripts/touch-punch.min.js;';
+
+         JSROOT.load_jquery = true;
+         if ((typeof define == 'function') && (lst_jq.length>0)) {
+            // special workarond for requirejs - hide define variable when loading jquery
+            JSROOT.load_jquery = { define : define };
+            define = null;
+         }
+      }
 
       var pos = kind.indexOf("user:");
       if (pos<0) pos = kind.indexOf("load:");
-      if (pos>=0) allfiles += ";" + kind.slice(pos+5);
+      if (pos>=0) allfiles += kind.slice(pos+5);
 
-      JSROOT.loadScript(allfiles, andThan, debugout);
+      JSROOT.loadScript(allfiles, function() {
+         if ((JSROOT.load_jquery!=null) && (typeof JSROOT.load_jquery == 'object')
+             && ('define' in JSROOT.load_jquery)) {
+            define = JSROOT.load_jquery.define;
+            JSROOT.load_jquery = true;
+         }
+         if (JSROOT.doing_assert.length==0) JSROOT.doing_assert = null;
+         JSROOT.CallBack(callback);
+         if (JSROOT.doing_assert && (JSROOT.doing_assert.length>0)) {
+            JSROOT.AssertPrerequisites('shift');
+         }
+      }, debugout);
    }
 
    JSROOT.BuildSimpleGUI = function(user_scripts, andThen) {
@@ -517,11 +637,18 @@
       }
 
       var debugout = null;
+      var nobrowser = JSROOT.GetUrlOption('nobrowser')!=null;
+      var requirements = "io;2d;";
 
-      var requirements = "2d;io;simple;";
-
-      if (document.getElementById('simpleGUI')) debugout = 'simpleGUI'; else
-      if (document.getElementById('onlineGUI')) { debugout = 'onlineGUI'; requirements = "2d;simple;"; }
+      if (document.getElementById('simpleGUI')) {
+         debugout = 'simpleGUI';
+         if ((JSROOT.GetUrlOption('json')!=null) &&
+             (JSROOT.GetUrlOption('file')==null) &&
+             (JSROOT.GetUrlOption('files')==null)) requirements = "2d;";
+      } else
+      if (document.getElementById('onlineGUI')) { debugout = 'onlineGUI'; requirements = "2d;"; } else
+      if (document.getElementById('drawGUI')) { debugout = 'drawGUI'; requirements = "2d;"; nobrowser = true; }
+      if (!nobrowser) requirements+='jq2d;simple;';
 
       if (user_scripts == null) user_scripts = JSROOT.GetUrlOption("autoload");
       if (user_scripts == null) user_scripts = JSROOT.GetUrlOption("load");
@@ -530,8 +657,9 @@
          requirements += "load:" + user_scripts + ";";
 
       JSROOT.AssertPrerequisites(requirements, function() {
-         if (typeof BuildSimpleGUI == 'function') BuildSimpleGUI();
-         if (typeof andThen == 'function') andThen();
+         var func = JSROOT.findFunction(nobrowser ? 'JSROOT.BuildNobrowserGUI' : 'BuildSimpleGUI');
+         JSROOT.CallBack(func);
+         JSROOT.CallBack(andThen);
       }, debugout);
    }
 
@@ -557,57 +685,57 @@
          obj = { _typename: typename };
 
       if (typename == 'TObject')
-         jQuery.extend(obj, { fUniqueID: 0, fBits: 0x3000008 });
+         JSROOT.extend(obj, { fUniqueID: 0, fBits: 0x3000008 });
       else
       if (typename == 'TNamed')
-         jQuery.extend(obj, { fUniqueID: 0, fBits: 0x3000008, fName: "", fTitle: "" });
+         JSROOT.extend(obj, { fUniqueID: 0, fBits: 0x3000008, fName: "", fTitle: "" });
       else
       if (typename == 'TList')
-         jQuery.extend(obj, { name: "TList", arr : [], opt : [] });
+         JSROOT.extend(obj, { name: "TList", arr : [], opt : [] });
       else
       if (typename == 'TAttAxis') {
-         jQuery.extend(obj, { fNdivisions: 510, fAxisColor: 1,
-            fLabelColor: 1, fLabelFont: 42, fLabelOffset: 0.05, fLabelSize: 0.035, fTickLength: 0.03,
+         JSROOT.extend(obj, { fNdivisions: 510, fAxisColor: 1,
+            fLabelColor: 1, fLabelFont: 42, fLabelOffset: 0.005, fLabelSize: 0.035, fTickLength: 0.03,
             fTitleOffset: 1, fTitleSize: 0.035, fTitleColor: 1, fTitleFont : 42 });
       } else
       if (typename == 'TAxis') {
          JSROOT.Create("TNamed", obj);
          JSROOT.Create("TAttAxis", obj);
-         jQuery.extend(obj, { fNbins: 0, fXmin: 0, fXmax: 0, fXbins : [], fFirst: 0, fLast: 0,
+         JSROOT.extend(obj, { fNbins: 0, fXmin: 0, fXmax: 0, fXbins : [], fFirst: 0, fLast: 0,
                               fBits2: 0, fTimeDisplay: false, fTimeFormat: "", fLabels: null });
       } else
       if (typename == 'TAttLine') {
-         jQuery.extend(obj, { fLineColor: 1, fLineStyle : 1, fLineWidth : 1 });
+         JSROOT.extend(obj, { fLineColor: 1, fLineStyle : 1, fLineWidth : 1 });
       } else
       if (typename == 'TAttFill') {
-         jQuery.extend(obj, { fFillColor: 0, fFillStyle : 0 } );
+         JSROOT.extend(obj, { fFillColor: 0, fFillStyle : 0 } );
       } else
       if (typename == 'TAttMarker') {
-         jQuery.extend(obj, { fMarkerColor: 1, fMarkerStyle : 1, fMarkerSize : 1. });
+         JSROOT.extend(obj, { fMarkerColor: 1, fMarkerStyle : 1, fMarkerSize : 1. });
       } else
       if (typename == 'TBox') {
          JSROOT.Create("TObject", obj);
          JSROOT.Create("TAttLine", obj);
          JSROOT.Create("TAttFill", obj);
-         jQuery.extend(obj, { fX1: 0, fY1: 0, fX2: 1, fY2: 1 });
+         JSROOT.extend(obj, { fX1: 0, fY1: 0, fX2: 1, fY2: 1 });
       } else
       if (typename == 'TPave') {
          JSROOT.Create("TBox", obj);
-         jQuery.extend(obj, { fX1NDC : 0., fY1NDC: 0, fX2NDC: 1, fY2NDC: 1,
+         JSROOT.extend(obj, { fX1NDC : 0., fY1NDC: 0, fX2NDC: 1, fY2NDC: 1,
                               fBorderSize: 0, fInit: 1, fShadowColor: 1,
                               fCornerRadius: 0, fOption: "blNDC", fName: "title" });
       } else
       if (typename == 'TAttText') {
-         jQuery.extend(obj, { fTextAngle: 0, fTextSize: 0, fTextAlign: 22, fTextColor: 1, fTextFont: 42});
+         JSROOT.extend(obj, { fTextAngle: 0, fTextSize: 0, fTextAlign: 22, fTextColor: 1, fTextFont: 42});
       } else
       if (typename == 'TPaveText') {
          JSROOT.Create("TPave", obj);
          JSROOT.Create("TAttText", obj);
-         jQuery.extend(obj, { fLabel: "", fLongest: 27, fMargin: 0.05, fLines: JSROOT.Create("TList") });
+         JSROOT.extend(obj, { fLabel: "", fLongest: 27, fMargin: 0.05, fLines: JSROOT.Create("TList") });
       } else
       if (typename == 'TPaveStats') {
          JSROOT.Create("TPaveText", obj);
-         jQuery.extend(obj, { fOptFit: 0, fOptStat: 0, fFitFormat: "", fStatFormat: "", fParent: null });
+         JSROOT.extend(obj, { fOptFit: 0, fOptStat: 0, fFitFormat: "", fStatFormat: "", fParent: null });
       } else
       if (typename == 'TH1') {
          JSROOT.Create("TNamed", obj);
@@ -615,7 +743,7 @@
          JSROOT.Create("TAttFill", obj);
          JSROOT.Create("TAttMarker", obj);
 
-         jQuery.extend(obj, {
+         JSROOT.extend(obj, {
             fNcells : 0,
             fXaxis: JSROOT.Create("TAxis"),
             fYaxis: JSROOT.Create("TAxis"),
@@ -629,22 +757,22 @@
       } else
       if (typename == 'TH1I' || typename == 'TH1F' || typename == 'TH1D' || typename == 'TH1S' || typename == 'TH1C') {
          JSROOT.Create("TH1", obj);
-         jQuery.extend(obj, { fArray: [] });
+         JSROOT.extend(obj, { fArray: [] });
       } else
       if (typename == 'TH2') {
          JSROOT.Create("TH1", obj);
-         jQuery.extend(obj, { fScalefactor: 1., fTsumwy: 0.,  fTsumwy2: 0, fTsumwxy : 0});
+         JSROOT.extend(obj, { fScalefactor: 1., fTsumwy: 0.,  fTsumwy2: 0, fTsumwxy : 0});
       } else
       if (typename == 'TH2I' || typename == 'TH2F' || typename == 'TH2D' || typename == 'TH2S' || typename == 'TH2C') {
          JSROOT.Create("TH2", obj);
-         jQuery.extend(obj, { fArray: [] });
+         JSROOT.extend(obj, { fArray: [] });
       } else
       if (typename == 'TGraph') {
          JSROOT.Create("TNamed", obj);
          JSROOT.Create("TAttLine", obj);
          JSROOT.Create("TAttFill", obj);
          JSROOT.Create("TAttMarker", obj);
-         jQuery.extend(obj, { fFunctions: JSROOT.Create("TList"), fHistogram: JSROOT.CreateTH1(),
+         JSROOT.extend(obj, { fFunctions: JSROOT.Create("TList"), fHistogram: JSROOT.CreateTH1(),
                               fMaxSize: 0, fMaximum:0, fMinimum:0, fNpoints: 0, fX: [], fY: [] });
       }
 
@@ -658,32 +786,32 @@
 
    JSROOT.CreateTH1 = function(nbinsx) {
       var histo = JSROOT.Create("TH1I");
-      jQuery.extend(histo, { fName: "dummy_histo_" + this.id_counter++, fTitle: "dummytitle" });
+      JSROOT.extend(histo, { fName: "dummy_histo_" + this.id_counter++, fTitle: "dummytitle" });
 
       if (nbinsx!=null) {
          histo['fNcells'] = nbinsx+2;
          for (var i=0;i<histo['fNcells'];i++) histo['fArray'].push(0);
-         jQuery.extend(histo['fXaxis'], { fNbins: nbinsx, fXmin: 0,  fXmax: nbinsx });
+         JSROOT.extend(histo['fXaxis'], { fNbins: nbinsx, fXmin: 0,  fXmax: nbinsx });
       }
       return histo;
    }
 
    JSROOT.CreateTH2 = function(nbinsx, nbinsy) {
       var histo = JSROOT.Create("TH2I");
-      jQuery.extend(histo, { fName: "dummy_histo_" + this.id_counter++, fTitle: "dummytitle" });
+      JSROOT.extend(histo, { fName: "dummy_histo_" + this.id_counter++, fTitle: "dummytitle" });
 
       if ((nbinsx!=null) && (nbinsy!=null)) {
          histo['fNcells'] = (nbinsx+2) * (nbinsy+2);
          for (var i=0;i<histo['fNcells'];i++) histo['fArray'].push(0);
-         jQuery.extend(histo['fXaxis'], { fNbins: nbinsx, fXmin: 0, fXmax: nbinsx });
-         jQuery.extend(histo['fYaxis'], { fNbins: nbinsy, fXmin: 0, fXmax: nbinsy });
+         JSROOT.extend(histo['fXaxis'], { fNbins: nbinsx, fXmin: 0, fXmax: nbinsx });
+         JSROOT.extend(histo['fYaxis'], { fNbins: nbinsy, fXmin: 0, fXmax: nbinsy });
       }
       return histo;
    }
 
    JSROOT.CreateTGraph = function(npoints) {
       var graph = JSROOT.Create("TGraph");
-      jQuery.extend(graph, { fBits: 0x3000408, fName: "dummy_graph_" + this.id_counter++, fTitle: "dummytitle" });
+      JSROOT.extend(graph, { fBits: 0x3000408, fName: "dummy_graph_" + this.id_counter++, fTitle: "dummytitle" });
 
       if (npoints>0) {
          graph['fMaxSize'] = graph['fNpoints'] = npoints;
@@ -774,7 +902,15 @@
          }
          obj['Add'] = function(obj,opt) {
             this['arr'].push(obj);
-            this['opt'].push((typeof opt=='string') ? opt : "");
+            this['opt'].push((opt && typeof opt=='string') ? opt : "");
+         }
+         obj['AddFirst'] = function(obj,opt) {
+            this['arr'].unshift(obj);
+            this['opt'].unshift((opt && typeof opt=='string') ? opt : "");
+         }
+         obj['RemoveAt'] = function(indx) {
+            this['arr'].splice(indx, 1);
+            this['opt'].splice(indx, 1);
          }
       }
 
@@ -819,6 +955,20 @@
             return ret;
          };
       }
+
+      if (obj_typename=='TF1') {
+         obj['GetParName'] = function(n) {
+            if (('fFormula' in this) && ('fParams' in this.fFormula)) return this.fFormula.fParams[n].first;
+            if ('fNames' in this) return this.fNames[n];
+            return "Par"+n;
+         }
+         obj['GetParValue'] = function(n) {
+            if (('fFormula' in this) && ('fClingParameters' in this.fFormula)) return this.fFormula.fClingParameters[n];
+            if (('fParams' in this) && (this.fParams!=null))  return this.fParams[n];
+            return null;
+         }
+      }
+
       if ((obj_typename.indexOf("TGraph") == 0) || (obj_typename == "TCutG")) {
          obj['ComputeRange'] = function() {
             // Compute the x/y range of the points in this graph
@@ -977,7 +1127,7 @@
             // - Loop on bins (including underflows/overflows)
             var bin, binx, biny, binz;
             var cu, factor = 1;
-            if (Math.abs(h1['fNormFactor']) > 2e-308) factor = h1['fNormFactor'] / h1.getSumOfWeights();
+            if (Math.abs(h1['fNormFactor']) > Number.MIN_VALUE) factor = h1['fNormFactor'] / h1.getSumOfWeights();
             for (binz=0;binz<=nbinsz+1;binz++) {
                for (biny=0;biny<=nbinsy+1;biny++) {
                   for (binx=0;binx<=nbinsx+1;binx++) {
@@ -1680,6 +1830,82 @@
       }
    };
 
+   JSROOT.lastFFormat = "";
+
+   JSROOT.FFormat = function(value, fmt) {
+      // method used to convert numeric value to string according specified format
+      // format can be like 5.4g or 4.2e or 6.4f
+      // function saves actual format in JSROOT.lastFFormat variable
+      if (!fmt) fmt = "6.4g";
+
+      JSROOT.lastFFormat = "";
+
+      if (!fmt) fmt = "6.4g";
+      fmt = fmt.trim();
+      var len = fmt.length;
+      if (len<2) return value.toFixed(4);
+      var last = fmt.charAt(len-1);
+      fmt = fmt.slice(0,len-1);
+      var isexp = null;
+      var prec = fmt.indexOf(".");
+      if (prec<0) prec = 4; else prec = Number(fmt.slice(prec+1));
+      if ((prec==NaN) || (prec<0) || (prec==null)) prec = 4;
+      var significance = false;
+      if ((last=='e') || (last=='E')) { isexp = true; } else
+      if (last=='Q') { isexp = true; significance = true; } else
+      if ((last=='f') || (last=='F')) { isexp = false; } else
+      if (last=='W') { isexp = false; significance = true; } else
+      if ((last=='g') || (last=='G')) {
+         var se = JSROOT.FFormat(value, fmt+'Q');
+         var _fmt = JSROOT.lastFFormat;
+         var sg = JSROOT.FFormat(value, fmt+'W');
+
+         if (se.length < sg.length) {
+            JSROOT.lastFFormat = _fmt;
+            return se;
+         }
+         return sg;
+      } else {
+         isexp = false;
+         prec = 4;
+      }
+
+      if (isexp) {
+         // for exponential representation only one significant digit befor point
+         if (significance) prec--;
+         if (prec<0) prec = 0;
+
+         JSROOT.lastFFormat = '5.'+prec+'e';
+
+         return value.toExponential(prec);
+      }
+
+      var sg = value.toFixed(prec);
+
+      if (significance) {
+
+         // when using fixed representation, one could get 0.0
+         if ((value!=0) && (Number(sg)==0.) && (prec>0)) {
+            prec = 40; sg = value.toFixed(prec);
+         }
+
+         var l = 0;
+         while ((l<sg.length) && (sg.charAt(l) == '0' || sg.charAt(l) == '-' || sg.charAt(l) == '.')) l++;
+
+         var diff = sg.length - l - prec;
+         if (sg.indexOf(".")>l) diff--;
+
+         if (diff != 0) {
+            prec-=diff; if (prec<0) prec = 0;
+            sg = value.toFixed(prec);
+         }
+      }
+
+      JSROOT.lastFFormat = '5.'+prec+'f';
+
+      return sg;
+   }
+
 
    // math methods for Javascript ROOT
 
@@ -2103,7 +2329,6 @@
       return JSROOT.Math.Landau(x, f['fParams'][i+1],f['fParams'][i+2], true);
    };
 
-
    // it is important to run this function at the end when all other
    // functions are available
    (function() {
@@ -2115,32 +2340,41 @@
          var src = scripts[n]['src'];
          if ((src == null) || (src.length == 0)) continue;
 
-         var pos = src.indexOf("scripts/JSRootCore.js");
+         var pos = src.indexOf("scripts/JSRootCore.");
          if (pos<0) continue;
 
          JSROOT.source_dir = src.substr(0, pos);
+         JSROOT.source_min = src.indexOf("scripts/JSRootCore.min.js")>=0;
 
-         console.log("Set JSROOT.source_dir to " + JSROOT.source_dir);
+         JSROOT.console("Set JSROOT.source_dir to " + JSROOT.source_dir);
 
-         if (JSROOT.GetUrlOption('gui', src)!=null) return JSROOT.BuildSimpleGUI();
+         if (JSROOT.GetUrlOption('gui', src)!=null) {
+            window.onload = function() { JSROOT.BuildSimpleGUI(); }
+            return;
+         }
 
          var prereq = "";
          if (JSROOT.GetUrlOption('io', src)!=null) prereq += "io;";
          if (JSROOT.GetUrlOption('2d', src)!=null) prereq += "2d;";
+         if (JSROOT.GetUrlOption('jq2d', src)!=null) prereq += "jq2d;";
          if (JSROOT.GetUrlOption('3d', src)!=null) prereq += "3d;";
+         if (JSROOT.GetUrlOption('mathjax', src)!=null) prereq += "mathjax;";
          var user = JSROOT.GetUrlOption('load', src);
          if ((user!=null) && (user.length>0)) prereq += "load:" + user;
          var onload = JSROOT.GetUrlOption('onload', src);
-         if (prereq.length>0) JSROOT.AssertPrerequisites(prereq, onload); else
-         if (onload!=null) {
-            onload = JSROOT.findFunction(onload);
-            if (typeof onload == 'function') onload();
+
+         if ((prereq.length>0) || (onload!=null))
+            window.onload = function() {
+              if (prereq.length>0) JSROOT.AssertPrerequisites(prereq, onload); else
+              if (onload!=null) {
+                 onload = JSROOT.findFunction(onload);
+                 if (typeof onload == 'function') onload();
+              }
          }
 
          return;
       }
    })();
-
 
 })();
 

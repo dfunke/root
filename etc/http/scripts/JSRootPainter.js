@@ -28,7 +28,10 @@
    // one could specify supported options list, separated with ';'
    // One could specify several draw functions for different draw options
    JSROOT.addDrawFunc = function(_name, _func, _opt) {
-      JSROOT.fDrawFunc.push({ name:_name, func:_func, opt:_opt });
+      if ((arguments.length == 1) && (typeof arguments[0] == 'object'))
+         JSROOT.fDrawFunc.push(arguments[0]);
+      else
+         JSROOT.fDrawFunc.push({ name:_name, func:_func, opt:_opt });
    }
 
    JSROOT.gStyle = {
@@ -41,19 +44,94 @@
       DefaultCol : 1,  // default col option 1-svg, 2-canvas
       AutoStat : true,
       OptStat  : 1111,
-      StatNDC  : { fX1NDC : 0.78, fY1NDC: 0.75, fX2NDC: 0.98, fY2NDC: 0.91 },
+      OptFit   : 0,
+      FrameNDC : { fX1NDC: 0.07, fY1NDC: 0.12, fX2NDC: 0.95, fY2NDC: 0.88 },
+      StatNDC  : { fX1NDC: 0.78, fY1NDC: 0.75, fX2NDC: 0.98, fY2NDC: 0.91 },
       StatText : { fTextAngle: 0, fTextSize: 9, fTextAlign: 12, fTextColor: 1, fTextFont: 42 },
       StatFill : { fFillColor: 0, fFillStyle: 1001 },
       TimeOffset : 788918400000, // UTC time at 01/01/95
-      StatFormat : function(v) { return (Math.abs(v) < 1e5) ? v.toFixed(5) : v.toExponential(7); },
-      StatEntriesFormat : function(v) { return (Math.abs(v) < 1e7) ? v.toFixed(0) : v.toExponential(7); },
+      StatFormat : "6.4g",
+      FitFormat : "5.4g",
       MathJax : 0,  // 0 - never, 1 - only for complex cases, 2 - always
+      Palette : null,  // color palette, initialized first time when used,
+      Interpolate : "basis" // d3.js interpolate methods, used in TGraph and TF1 painters
    };
 
    /**
     * @class JSROOT.Painter Holder of different functions and classes for drawing
     */
    JSROOT.Painter = {};
+
+   /**
+    * Converts an HSL color value to RGB. Conversion formula adapted from
+    * http://en.wikipedia.org/wiki/HSL_color_space. Assumes h, s, and l are
+    * contained in the set [0, 1] and returns r, g, and b in the set [0, 255].
+    *
+    * @param Number
+    *           h The hue
+    * @param Number
+    *           s The saturation
+    * @param Number
+    *           l The lightness
+    * @return Array The RGB representation
+    */
+   JSROOT.Painter.HLStoRGB = function(h, l, s) {
+      var r, g, b;
+      if (s < 1e-300) {
+         r = g = b = l; // achromatic
+      } else {
+         function hue2rgb(p, q, t) {
+            if (t < 0) t += 1;
+            if (t > 1) t -= 1;
+            if (t < 1 / 6) return p + (q - p) * 6 * t;
+            if (t < 1 / 2) return q;
+            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
+            return p;
+         }
+         var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
+         var p = 2 * l - q;
+         r = hue2rgb(p, q, h + 1 / 3);
+         g = hue2rgb(p, q, h);
+         b = hue2rgb(p, q, h - 1 / 3);
+      }
+      return 'rgb(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')';
+   }
+
+   JSROOT.gStyle.GetColorPalette = function(ncol) {
+      // return either full palette or only color specified
+
+      if (this.Palette == null) {
+         this.Palette = [];
+         var saturation = 1, lightness = 0.5, maxHue = 280, minHue = 0, maxPretty = 50;
+         for (var i = 0; i < maxPretty; i++) {
+            var hue = (maxHue - (i + 1) * ((maxHue - minHue) / maxPretty)) / 360.0;
+            var rgbval = JSROOT.Painter.HLStoRGB(hue, lightness, saturation);
+            this.Palette.push(rgbval);
+         }
+      }
+
+      if (ncol==null) return this.Palette;
+
+      if (ncol<0) return this.Palette[0];
+      if (ncol>=this.Palette.length) return this.Palette[this.Palette.length-1];
+      return this.Palette[ncol];
+   }
+
+
+   JSROOT.Painter.createMenu = function(maincallback, menuname) {
+      // dummy functions, forward call to the jquery function
+      document.body.style.cursor = 'wait';
+      JSROOT.AssertPrerequisites('jq2d', function() {
+         document.body.style.cursor = 'auto';
+         JSROOT.Painter.createMenu(maincallback, menuname);
+      });
+   }
+
+   JSROOT.Painter.closeMenu = function(menuname) {
+      if (!menuname) menuname = 'root_ctx_menu';
+      var x = document.getElementById(menuname);
+      if (x) x.parentNode.removeChild(x);
+   }
 
    JSROOT.Painter.readStyleFromURL = function(url) {
       var optimize = JSROOT.GetUrlOption("optimize", url);
@@ -81,80 +159,17 @@
       }
 
       var mathjax = JSROOT.GetUrlOption("mathjax", url);
-      if (mathjax == "") JSROOT.gStyle.MathJax = 1; else
-      if (mathjax != null) {
-         JSROOT.gStyle.MathJax = parseInt(mathjax);
-         if (JSROOT.gStyle.MathJax == NaN) JSROOT.gStyle.MathJax = 1;
-      }
-   }
+      if ((mathjax!=null) && (mathjax!="0")) JSROOT.MathJax = 1;
 
-   JSROOT.createMenu = function(menuname) {
-      if (!menuname) menuname = "root_ctx_menu";
+      if (JSROOT.GetUrlOption("nomenu", url)!=null) JSROOT.gStyle.ContextMenu = false;
 
-      var menu = { divid: menuname, code:"", cnt: 1, funcs : {} };
+      JSROOT.gStyle.OptStat = JSROOT.GetUrlOption("optstat", url, JSROOT.gStyle.OptStat);
+      JSROOT.gStyle.OptFit = JSROOT.GetUrlOption("optfit", url, JSROOT.gStyle.OptFit);
+      JSROOT.gStyle.StatFormat = JSROOT.GetUrlOption("statfmt", url, JSROOT.gStyle.StatFormat);
+      JSROOT.gStyle.FitFormat = JSROOT.GetUrlOption("fitfmt", url, JSROOT.gStyle.FitFormat);
 
-      menu.add = function(name, arg, func) {
-         if (name.indexOf("header:")==0) {
-            this.code += "<li class='ui-widget-header'>"+name.substr(7)+"</li>";
-            return;
-         }
-
-         if (name=="endsub:") { this.code += "</ul></li>"; return; }
-         var close_tag = "</li>";
-         if (name.indexOf("sub:")==0) { name = name.substr(4); close_tag="<ul>"; }
-
-         if (typeof arg == 'function') { func = arg; arg = name; }
-
-         if ((arg==null) || (typeof arg != 'string')) arg = name;
-         this.code += "<li cnt='" + this.cnt + "' arg='" + arg + "'>" + name + close_tag;
-         if (typeof func == 'function') this.funcs[this.cnt] = func; // keep call-back function
-
-         this.cnt++;
-      }
-
-      menu.size = function() { return this.cnt-1; }
-
-      menu.addDrawMenu = function(menu_name, opts, call_back) {
-         if (opts==null) opts = new Array;
-         if (opts.length==0) opts.push("");
-
-         this.add((opts.length > 1) ? ("sub:" + menu_name) : menu_name, opts[0], call_back);
-         if (opts.length<2) return;
-
-         for (var i=0;i<opts.length;i++) {
-            var name = opts[i];
-            if (name=="") name = '&lt;dflt&gt;';
-            this.add(name, opts[i], call_back);
-         }
-         this.add("endsub:");
-      }
-
-      menu.remove = function() { $("#"+menuname).remove(); }
-
-      menu.show = function(event) {
-         menu.remove();
-
-         document.body.onclick = function(e) { menu.remove(); }
-
-         $(document.body).append('<ul id="' + menuname + '">' + this.code + '</ul>');
-
-         $("#" + menuname)
-            .css('left', event.clientX + window.pageXOffset)
-            .css('top', event.clientY + window.pageYOffset)
-            .attr('class', 'ctxmenu')
-            .menu({
-               items: "> :not(.ui-widget-header)",
-               select: function( event, ui ) {
-                  var arg = ui.item.attr('arg');
-                  var cnt = ui.item.attr('cnt');
-                  var func = cnt ? menu.funcs[cnt] : null;
-                  menu.remove();
-                  if (typeof func == 'function') func(arg);
-              }
-         });
-      }
-
-      return menu;
+      var interpolate = JSROOT.GetUrlOption("interpolate", url);
+      if (interpolate!=null) JSROOT.gStyle.Interpolate = interpolate;
    }
 
    JSROOT.Painter.Coord = {
@@ -291,9 +306,11 @@
          'otriangle-down', 'fdiamond', 'fcross');
 
    /** Function returns the ready to use marker for drawing */
-   JSROOT.Painter.createAttMarker = function(attmarker) {
+   JSROOT.Painter.createAttMarker = function(attmarker, style) {
 
-      var marker_name = JSROOT.Painter.root_markers[attmarker['fMarkerStyle']];
+      if (style==null) style = attmarker['fMarkerStyle'];
+
+      var marker_name = JSROOT.Painter.root_markers[style];
 
       var info = { shape: 0, toFill: true, toRotate: false };
 
@@ -317,8 +334,8 @@
 
       var markerSize = attmarker['fMarkerSize'];
 
-      var markerScale = (info.shape == 0) ? 32 : 64;
-      if (attmarker['fMarkerStyle'] == 1) markerScale = 1;
+      var markerScale = 64;
+      if (style == 1) markerScale = 1;
 
       var marker_color = JSROOT.Painter.root_colors[attmarker['fMarkerColor']];
 
@@ -345,6 +362,7 @@
       res.SetMarker = function(selection) {
          selection.style("fill", this.fill)
                   .style("stroke", this.stroke)
+                  .style("pointer-events","visibleFill") // even if not filled, get events
                   .attr("d", this.marker);
       }
       res.func = res.SetMarker.bind(res);
@@ -450,7 +468,6 @@
       res.stringWidth = function(svg, line) {
          /* compute the bounding box of a string by using temporary svg:text */
          var text = svg.append("svg:text")
-                     .attr("class", "temp_text")
                      .attr("xml:space","preserve")
                      .style("opacity", 0)
                      .text(line);
@@ -473,13 +490,6 @@
       return x;
    }
 
-   JSROOT.Painter.moveChildToEnd = function(child) {
-      if (!child) return;
-      var prnt = child.node().parentNode;
-      prnt.removeChild(child.node());
-      prnt.appendChild(child.node());
-   }
-
    JSROOT.Painter.ytoPad = function(y, pad) {
       if (pad['fLogy']) {
          if (y > 0)
@@ -489,41 +499,6 @@
       }
       return y;
    };
-
-   /**
-    * Converts an HSL color value to RGB. Conversion formula adapted from
-    * http://en.wikipedia.org/wiki/HSL_color_space. Assumes h, s, and l are
-    * contained in the set [0, 1] and returns r, g, and b in the set [0, 255].
-    *
-    * @param Number
-    *           h The hue
-    * @param Number
-    *           s The saturation
-    * @param Number
-    *           l The lightness
-    * @return Array The RGB representation
-    */
-   JSROOT.Painter.HLStoRGB = function(h, l, s) {
-      var r, g, b;
-      if (s < 1e-300) {
-         r = g = b = l; // achromatic
-      } else {
-         function hue2rgb(p, q, t) {
-            if (t < 0) t += 1;
-            if (t > 1) t -= 1;
-            if (t < 1 / 6) return p + (q - p) * 6 * t;
-            if (t < 1 / 2) return q;
-            if (t < 2 / 3) return p + (q - p) * (2 / 3 - t) * 6;
-            return p;
-         }
-         var q = l < 0.5 ? l * (1 + s) : l + s - l * s;
-         var p = 2 * l - q;
-         r = hue2rgb(p, q, h + 1 / 3);
-         g = hue2rgb(p, q, h);
-         b = hue2rgb(p, q, h - 1 / 3);
-      }
-      return 'rgb(' + Math.round(r * 255) + ',' + Math.round(g * 255) + ',' + Math.round(b * 255) + ')';
-   }
 
    JSROOT.Painter.chooseTimeFormat = function(range, nticks) {
       if (nticks < 1) nticks = 1;
@@ -582,31 +557,23 @@
    }
 
    JSROOT.Painter.getTimeOffset = function(axis) {
-      var timeFormat = axis['fTimeFormat'];
+      var idF = axis['fTimeFormat'].indexOf('%F');
+      if (idF < 0) return JSROOT.gStyle['TimeOffset'];
+      var sof = axis['fTimeFormat'].substr(idF + 2);
+      if (sof == '1995-01-01 00:00:00s0') return 788918400000;
+      // special case, used from DABC painters
+      if ((sof == "0") || (sof == "")) return 0;
 
-      var idF = timeFormat.indexOf('%F');
-
-      if (idF >= 0) {
-         var lnF = timeFormat.length;
-         var stringtimeoffset = timeFormat.substr(idF + 2, lnF);
-         for (var i = 0; i < 3; ++i)
-            stringtimeoffset = stringtimeoffset.replace('-', '/');
-         // special case, used from DABC painters
-         if ((stringtimeoffset == "0") || (stringtimeoffset == "")) return 0;
-
-         var stimeoffset = new Date(stringtimeoffset);
-         var timeoffset = stimeoffset.getTime();
-         var ids = stringtimeoffset.indexOf('s');
-         if (ids >= 0) {
-            var lns = stringtimeoffset.length;
-            var sdp = stringtimeoffset.substr(ids + 1, lns);
-            var dp = parseFloat(sdp);
-            timeoffset += dp;
-         }
-         return timeoffset;
-      }
-
-      return JSROOT.gStyle['TimeOffset'];
+      // decode time from ROOT string
+      var dt = new Date(0);
+      var pos = sof.indexOf("-"); dt.setFullYear(sof.substr(0,pos)); sof = sof.substr(pos+1);
+      pos = sof.indexOf("-"); dt.setMonth(parseInt(sof.substr(0,pos))-1); sof = sof.substr(pos+1);
+      pos = sof.indexOf(" "); dt.setDate(sof.substr(0,pos)); sof = sof.substr(pos+1);
+      pos = sof.indexOf(":"); dt.setHours(sof.substr(0,pos)); sof = sof.substr(pos+1);
+      pos = sof.indexOf(":"); dt.setMinutes(sof.substr(0,pos)); sof = sof.substr(pos+1);
+      pos = sof.indexOf("s"); dt.setSeconds(sof.substr(0,pos));
+      if (pos>0) { sof = sof.substr(pos+1); dt.setMilliseconds(sof); }
+      return dt.getTime();
    }
 
    JSROOT.Painter.formatExp = function(label) {
@@ -814,7 +781,9 @@
       '#Box' : '',
       '#parallel' : '',
       '#perp' : '\u22A5',
-      '#odot' : ''
+      '#odot' : '',
+      '#left' : '',
+      '#right' : ''
    };
 
    JSROOT.Painter.translateLaTeX = function(string) {
@@ -855,6 +824,134 @@
       return str;
    }
 
+   JSROOT.Painter.isAnyLatex = function(str) {
+
+      return (str.indexOf("#")>=0) || (str.indexOf("\\")>=0) || (str.indexOf("{")>=0);
+
+      //var specials = "\\{}_()#";
+      //for (var i=0;i<str.length;i++) {
+      //   if (specials.indexOf(str[i])>=0) return true;
+      //}
+      //return false;
+
+      //for ( var x in JSROOT.Painter.symbols_map)
+      //   if (str.indexOf(x) >= 0) return true;
+   }
+
+   JSROOT.Painter.translateMath = function(str, kind, color) {
+      // function translate ROOT TLatex into MathJax format
+
+      if (kind!=2) {
+         str = str.replace(/#LT/g, "\\langle");
+         str = str.replace(/#GT/g, "\\rangle");
+         str = str.replace(/#club/g, "\\clubsuit");
+         str = str.replace(/#spade/g, "\\spadesuit");
+         str = str.replace(/#heart/g, "\\heartsuit");
+         str = str.replace(/#diamond/g, "\\diamondsuit");
+         str = str.replace(/#voidn/g, "\\wp");
+         str = str.replace(/#voidb/g, "f");
+         str = str.replace(/#copyright/g, "(c)");
+         str = str.replace(/#ocopyright/g, "(c)");
+         str = str.replace(/#trademark/g, "TM");
+         str = str.replace(/#void3/g, "TM");
+         str = str.replace(/#oright/g, "R");
+         str = str.replace(/#void1/g, "R");
+         str = str.replace(/#3dots/g, "\\ldots");
+         str = str.replace(/#lbar/g, "\\mid");
+         str = str.replace(/#void8/g, "\\mid");
+         str = str.replace(/#divide/g, "\\div");
+         str = str.replace(/#Jgothic/g, "\\Im");
+         str = str.replace(/#Rgothic/g, "\\Re");
+         str = str.replace(/#doublequote/g, "\"");
+         str = str.replace(/#plus/g, "+");
+
+         str = str.replace(/#diamond/g, "\\diamondsuit");
+         str = str.replace(/#voidn/g, "\\wp");
+         str = str.replace(/#voidb/g, "f");
+         str = str.replace(/#copyright/g, "(c)");
+         str = str.replace(/#ocopyright/g, "(c)");
+         str = str.replace(/#trademark/g, "TM");
+         str = str.replace(/#void3/g, "TM");
+         str = str.replace(/#oright/g, "R");
+         str = str.replace(/#void1/g, "R");
+         str = str.replace(/#3dots/g, "\\ldots");
+         str = str.replace(/#lbar/g, "\\mid");
+         str = str.replace(/#void8/g, "\\mid");
+         str = str.replace(/#divide/g, "\\div");
+         str = str.replace(/#Jgothic/g, "\\Im");
+         str = str.replace(/#Rgothic/g, "\\Re");
+         str = str.replace(/#doublequote/g, "\"");
+         str = str.replace(/#plus/g, "+");
+         str = str.replace(/#minus/g, "-");
+         str = str.replace(/#\//g, "/");
+         str = str.replace(/#upoint/g, ".");
+         str = str.replace(/#aa/g, "\\mathring{a}");
+         str = str.replace(/#AA/g, "\\mathring{A}");
+
+         str = str.replace(/#omicron/g, "o");
+         str = str.replace(/#Alpha/g, "A");
+         str = str.replace(/#Beta/g, "B");
+         str = str.replace(/#Epsilon/g, "E");
+         str = str.replace(/#Zeta/g, "Z");
+         str = str.replace(/#Eta/g, "H");
+         str = str.replace(/#Iota/g, "I");
+         str = str.replace(/#Kappa/g, "K");
+         str = str.replace(/#Mu/g, "M");
+         str = str.replace(/#Nu/g, "N");
+         str = str.replace(/#Omicron/g, "O");
+         str = str.replace(/#Rho/g, "P");
+         str = str.replace(/#Tau/g, "T");
+         str = str.replace(/#Chi/g, "X");
+         str = str.replace(/#varomega/g, "\\varpi");
+
+         str = str.replace(/#corner/g, "?");
+         str = str.replace(/#ltbar/g, "?");
+         str = str.replace(/#bottombar/g, "?");
+         str = str.replace(/#notsubset/g, "?");
+         str = str.replace(/#arcbottom/g, "?");
+         str = str.replace(/#cbar/g, "?");
+         str = str.replace(/#arctop/g, "?");
+         str = str.replace(/#topbar/g, "?");
+         str = str.replace(/#arcbar/g, "?");
+         str = str.replace(/#downleftarrow/g, "?");
+         str = str.replace(/#splitline/g, "\\genfrac{}{}{0pt}{}");
+
+         str = str.replace(/#frac/g, "\\frac");
+         //str = str.replace(/#left{/g, "\\left\\{");
+         //str = str.replace(/#right}/g, "\\right\\}");
+         str = str.replace(/#left{/g, "\\lbrace");
+         str = str.replace(/#right}/g, "\\rbrace");
+         str = str.replace(/#left\[/g, "\\lbrack");
+         str = str.replace(/#right\]/g, "\\rbrack");
+         //str = str.replace(/#left/g, "\\left");
+         //str = str.replace(/#right/g, "\\right");
+         // processing of #[] #{} should be done
+         str = str.replace(/#\[\]{/g, "\\lbrack");
+         str = str.replace(/ } /g, "\\rbrack");
+         //str = str.replace(/#\[\]/g, "\\brack");
+         //str = str.replace(/#{}/g, "\\brace");
+         str = str.replace(/#\[/g, "\\lbrack");
+         str = str.replace(/#\]/g, "\\rbrack");
+         str = str.replace(/#{/g, "\\lbrace");
+         str = str.replace(/#}/g, "\\rbrace");
+         str = str.replace(/ /g, "\\;");
+
+         for (var x in JSROOT.Painter.symbols_map) {
+            var y = "\\" + x.substr(1);
+            str = str.replace(new RegExp(x,'g'), y);
+         }
+      } else {
+         str = str.replace(/\\\^/g, "\\hat");
+      }
+
+      if (typeof color != 'string') return "\\(" + str + "\\)";
+      mathcolor = color;
+      mathcolor = mathcolor.replace(/rgb/g, "[RGB]");
+      mathcolor = mathcolor.replace(/\(/g, '{');
+      mathcolor = mathcolor.replace(/\)/g, '}');
+      return "\\(\\color " + mathcolor + str + "\\)";
+   }
+
    // ==============================================================================
 
    JSROOT.TBasePainter = function() {
@@ -862,6 +959,23 @@
 
    JSROOT.TBasePainter.prototype.Cleanup = function() {
       // generic method to cleanup painter
+   }
+
+   JSROOT.TBasePainter.prototype.DrawingReady = function() {
+      // function should be called by the painter when first drawing is completed
+      this['_ready_called_'] = true;
+      if ('_ready_callback_' in this) {
+         JSROOT.CallBack(this['_ready_callback_'], this);
+         delete this['_ready_callback_'];
+         this['_ready_callback_'] = null;
+      }
+      return this;
+   }
+
+   JSROOT.TBasePainter.prototype.WhenReady = function(callback) {
+      // call back will be called when painter ready with the drawing
+      if ('_ready_called_' in this) return JSROOT.CallBack(callback, this);
+      this['_ready_callback_'] = callback;
    }
 
    JSROOT.TBasePainter.prototype.GetObject = function() {
@@ -893,18 +1007,27 @@
 
       this['divid'] = divid;
 
-      $("#" + divid).children().eq(0).prop('painter', this);
+      var main = d3.select("#" + divid);
+      if (main.node() && main.node().firstChild)
+         main.node().firstChild['painter'] = this;
    }
 
-   JSROOT.TBasePainter.prototype.SetItemName = function(name) {
-      if (name==null)
+   JSROOT.TBasePainter.prototype.SetItemName = function(name, opt) {
+      if (name==null) {
          delete this['_hitemname'];
-      else
+         delete this['_hdrawopt'];
+      } else {
          this['_hitemname'] = name;
+         this['_hdrawopt'] = opt;
+      }
    }
 
    JSROOT.TBasePainter.prototype.GetItemName = function() {
       return ('_hitemname' in this) ? this['_hitemname'] : null;
+   }
+
+   JSROOT.TBasePainter.prototype.GetItemDrawOpt = function() {
+      return ('_hdrawopt' in this) ? this['_hdrawopt'] : null;
    }
 
 
@@ -924,7 +1047,7 @@
       // no canvas - no resize
       var can = this.svg_canvas();
 
-      var pad_painter = can ? can['pad_painter'] : null;
+      var pad_painter = can.empty() ? null : can.property('pad_painter');
 
       if (pad_painter) pad_painter.CheckCanvasResize();
    }
@@ -939,7 +1062,7 @@
       }
    }
 
-   JSROOT.TObjectPainter.prototype.RecreateDrawG = function(take_pad, layer) {
+   JSROOT.TObjectPainter.prototype.RecreateDrawG = function(take_pad, layer, normalg) {
       //this.RemoveDrawG();
 
       if (this.draw_g)
@@ -948,58 +1071,80 @@
       if (take_pad) {
          if (layer==null) layer = ".text_layer"
          if (!this.draw_g)
-            this.draw_g = this.svg_pad(true).select(layer).append("svg:g");
+            this.draw_g = this.svg_pad().select(layer).append("svg:g");
       } else {
-         var frame = this.svg_frame(true);
+         var frame = this.svg_frame();
 
          var w = frame.attr("width");
          var h = frame.attr("height");
 
          if (!this.draw_g) {
             if (layer==null) layer = ".main_layer";
-            this.draw_g = frame.select(layer).append("svg");
+            if (normalg)
+               this.draw_g = frame.select(layer).append("g");
+            else
+               this.draw_g = frame.select(layer).append("svg");
          }
 
-         this.draw_g.attr("x", 0)
-                    .attr("y", 0)
-                    .attr("width",w)
-                    .attr("height", h)
-                    .attr("viewBox", "0 0 " + w + " " + h)
-                    .attr('overflow', 'hidden');
+         if (!normalg)
+            this.draw_g.attr("x", 0)
+                       .attr("y", 0)
+                       .attr("width",w)
+                       .attr("height", h)
+                       .attr("viewBox", "0 0 " + w + " " + h)
+                       .attr('overflow', 'hidden');
       }
    }
 
    /** This is main graphical SVG element, where all Canvas drawing are performed */
-   JSROOT.TObjectPainter.prototype.svg_canvas = function(asselect) {
-      var res = d3.select("#" + this.divid + " .root_canvas");
-      return asselect ? res : res.node();
+   JSROOT.TObjectPainter.prototype.svg_canvas = function() {
+      return d3.select("#" + this.divid + " .root_canvas");
    }
 
    /** This is SVG element, correspondent to current pad */
-   JSROOT.TObjectPainter.prototype.svg_pad = function(asselect) {
-      var c = this.svg_canvas(true);
-      if (this.pad_name != '')
+   JSROOT.TObjectPainter.prototype.svg_pad = function() {
+      var c = this.svg_canvas();
+      if ((this.pad_name != '') && !c.empty())
          c = c.select("[pad=" + this.pad_name + ']');
-      return asselect ? c : c.node();
+      return c;
    }
 
    JSROOT.TObjectPainter.prototype.root_pad = function() {
       var p = this.svg_pad();
-      var pad_painter = p ? p['pad_painter'] : null;
+      var pad_painter = p.empty() ? null : p.property('pad_painter');
       return pad_painter ? pad_painter.pad : null;
    }
 
    /** This is SVG element with current frame */
-   JSROOT.TObjectPainter.prototype.svg_frame = function(asselect) {
-      var f = this.svg_pad(true).select(".root_frame");
-      return asselect ? f : f.node();
+   JSROOT.TObjectPainter.prototype.svg_frame = function() {
+      return this.svg_pad().select(".root_frame");
+   }
+
+   JSROOT.TObjectPainter.prototype.pad_width = function() {
+      var res = parseInt(this.svg_pad().attr("width"));
+      return (res==NaN) ? 0 : res;
+   }
+
+   JSROOT.TObjectPainter.prototype.pad_height = function() {
+      var res = parseInt(this.svg_pad().attr("height"));
+      return (res==NaN) ? 0 : res;
+   }
+
+   JSROOT.TObjectPainter.prototype.frame_width = function() {
+      var res = parseInt(this.svg_frame().attr("width"));
+      return (res==NaN) ? 0 : res;
+   }
+
+   JSROOT.TObjectPainter.prototype.frame_height = function() {
+      var res = parseInt(this.svg_frame().attr("height"));
+      return (res==NaN) ? 0 : res;
    }
 
    /** Returns main pad painter - normally TH1/TH2 painter, which draws all axis */
    JSROOT.TObjectPainter.prototype.main_painter = function() {
       if (!this.main) {
          var svg_p = this.svg_pad();
-         if (svg_p) this.main = svg_p['mainpainter'];
+         if (!svg_p.empty()) this.main = svg_p.property('mainpainter');
       }
       return this.main;
    }
@@ -1025,39 +1170,43 @@
       // SVG element where canvas is drawn
       var svg_c = this.svg_canvas();
 
-      if ((svg_c==null) && (is_main>0)) {
+      if (svg_c.empty() && (is_main>0)) {
          JSROOT.Painter.drawCanvas(divid, null);
          svg_c = this.svg_canvas();
          this['create_canvas'] = true;
       }
 
-      if (svg_c == null) {
+      if (svg_c.empty()) {
          if ((is_main < 0) || (this.obj_typename=="TCanvas")) return;
 
-         console.log("Special case for " + this.obj_typename + " assign painter to first DOM element");
-         $("#" + divid).children().eq(0).prop('painter', this);
+         JSROOT.console("Special case for " + this.obj_typename + " assign painter to first DOM element");
+         var main = d3.select("#" + divid);
+         if (main.node() && main.node().firstChild)
+            main.node().firstChild['painter'] = this;
          return;
       }
 
       // SVG element where current pad is drawn (can be canvas itself)
-      this.pad_name = svg_c['current_pad'];
+      this.pad_name = svg_c.property('current_pad');
 
       if (is_main < 0) return;
 
       // create TFrame element if not exists when
-      if ((is_main > 0) && (this.svg_frame()==null)) {
+      if ((is_main > 0) && this.svg_frame().empty()) {
          JSROOT.Painter.drawFrame(divid, null);
-         if (this.svg_frame()==null) return alert("Fail to draw dummy TFrame");
+         if (this.svg_frame().empty()) return alert("Fail to draw dummy TFrame");
          this['create_canvas'] = true;
       }
 
       var svg_p = this.svg_pad();
-      if (svg_p['pad_painter'] != this)
-         svg_p['pad_painter'].painters.push(this);
+      if (svg_p.empty()) return;
 
-      if ((is_main > 0) && (svg_p['mainpainter']==null))
+      if (svg_p.property('pad_painter') != this)
+         svg_p.property('pad_painter').painters.push(this);
+
+      if ((is_main > 0) && (svg_p.property('mainpainter')==null))
          // when this is first main painter in the pad
-         svg_p['mainpainter'] = this;
+         svg_p.property('mainpainter', this);
    }
 
    JSROOT.TObjectPainter.prototype.SetForeignObjectPosition = function(fo, x, y) {
@@ -1068,7 +1217,7 @@
 
       if (JSROOT.browser.isWebKit) {
          // force canvas redraw when foreign object used - it is not correctly scaled
-         this.svg_canvas(true).property('redraw_by_resize', true);
+         this.svg_canvas().property('redraw_by_resize', true);
          while (sel && sel.attr('class') != 'root_canvas') {
             if ((sel.attr('class') == 'root_frame') || (sel.attr('class') == 'root_pad')) {
               x += parseInt(sel.attr("x"));
@@ -1105,7 +1254,7 @@
       fill.color = JSROOT.Painter.root_colors[color];
       if (typeof fill.color != 'string') fill.color = "none";
 
-      var svg = this.svg_canvas(true);
+      var svg = this.svg_canvas();
 
       if ((pattern < 3000) || (pattern>3025) || svg.empty()) return fill;
 
@@ -1197,20 +1346,21 @@
    JSROOT.TObjectPainter.prototype.ForEachPainter = function(userfunc) {
       // Iterate over all known painters
 
-      var painter = $("#" + this.divid).children().eq(0).prop('painter');
+      var main = d3.select("#" + this.divid);
+      var painter = (main.node() && main.node().firstChild) ? main.node().firstChild['painter'] : null;
       if (painter!=null) { userfunc(painter); return; }
 
       var svg_c = this.svg_canvas();
-      if (svg_c==null) return;
+      if (svg_c.empty()) return;
 
-      userfunc(svg_c['pad_painter']);
-      var painters = svg_c['pad_painter'].painters;
+      userfunc(svg_c.property('pad_painter'));
+      var painters = svg_c.property('pad_painter').painters;
       for (var k in painters) userfunc(painters[k]);
    }
 
    JSROOT.TObjectPainter.prototype.Cleanup = function() {
       // generic method to cleanup painters
-      $("#" + this.divid).empty();
+      d3.select("#" + this.divid).html("");
    }
 
    JSROOT.TObjectPainter.prototype.RedrawPad = function() {
@@ -1219,163 +1369,171 @@
 
       var pad = this.svg_pad();
 
-      var pad_painter = pad ? pad['pad_painter'] : null;
+      var pad_painter = pad.empty() ? null : pad.property('pad_painter');
 
       if (pad_painter) pad_painter.Redraw();
    }
 
-   JSROOT.TObjectPainter.prototype.RemoveDrag = function(id) {
-      var drag_rect_name = id + "_drag_rect";
-      var resize_rect_name = id + "_resize_rect";
-      if (this[drag_rect_name]) {
-         this[drag_rect_name].remove();
-         this[drag_rect_name] = null;
-      }
-      if (this[resize_rect_name]) {
-         this[resize_rect_name].remove();
-         this[resize_rect_name] = null;
-      }
-   }
-
-   JSROOT.TObjectPainter.prototype.AddDrag = function(id, draw_g, callback) {
+   JSROOT.TObjectPainter.prototype.AddDrag = function(callback) {
       if (!JSROOT.gStyle.MoveResize) return;
 
       var pthis = this;
 
-      var drag_rect_name = id + "_drag_rect";
-      var resize_rect_name = id + "_resize_rect";
-
-      var rect_width = function() { return Number(draw_g.attr("width")); }
-      var rect_height = function() { return Number(draw_g.attr("height")); }
+      var rect_width = function() { return Number(pthis.draw_g.attr("width")); }
+      var rect_height = function() { return Number(pthis.draw_g.attr("height")); }
 
       var acc_x = 0, acc_y = 0, pad_w = 1, pad_h = 1;
 
-      var drag_move = d3.behavior.drag().origin(Object)
-         .on("dragstart",  function() {
-            d3.event.sourceEvent.preventDefault();
+      function detectRightButton(event) {
+         if ('buttons' in event) return event.buttons === 2;
+         else if ('which' in event) return event.which === 2;
+         else if ('button' in event) return event.button === 2;
+         return false;
+      }
 
-            acc_x = 0; acc_y = 0;
-            pad_w = Number(pthis.svg_pad(true).attr("width")) - rect_width();
-            pad_h = Number(pthis.svg_pad(true).attr("height")) - rect_height();
-
-            pthis[drag_rect_name] =
-               pthis.svg_pad(true)
-                 .append("rect")
-                 .attr("class", "zoom")
-                 .attr("id", drag_rect_name)
-                 .attr("x",  draw_g.attr("x"))
-                 .attr("y", draw_g.attr("y"))
-                 .attr("width", rect_width())
-                 .attr("height", rect_height())
-                 .style("cursor", "move");
-          }).on("drag", function() {
-               d3.event.sourceEvent.preventDefault();
-
-               var x = Number(pthis[drag_rect_name].attr("x"));
-               var y = Number(pthis[drag_rect_name].attr("y"));
-               var dx = d3.event.dx, dy = d3.event.dy;
-
-               if (((acc_x<0) && (dx>0)) || ((acc_x>0) && (dx<0))) { acc_x += dx; dx = 0; }
-               if (((acc_y<0) && (dy>0)) || ((acc_y>0) && (dy<0))) { acc_y += dy; dy = 0; }
-
-               if ((x + dx < 0) || (x +dx > pad_w)) acc_x += dx; else x+=dx;
-               if ((y+dy < 0) || (y+dy > pad_h)) acc_y += dy; else y += dy;
-
-               pthis[drag_rect_name].attr("x", x);
-               pthis[drag_rect_name].attr("y", y);
-
-               JSROOT.Painter.moveChildToEnd(pthis[drag_rect_name]);
-
-               d3.event.sourceEvent.stopPropagation();
-          }).on("dragend", function() {
-               d3.event.sourceEvent.preventDefault();
-
-               pthis[drag_rect_name].style("cursor", "auto");
-
-               var x = Number(pthis[drag_rect_name].attr("x"));
-               var y = Number(pthis[drag_rect_name].attr("y"));
-
-               var dx = x - Number(draw_g.attr("x"));
-               var dy = y - Number(draw_g.attr("y"));
-
-               pthis[drag_rect_name].remove();
-               pthis[drag_rect_name] = null;
-
-               draw_g.attr("x", x).attr("y", y);
-
-               callback.move(x, y, dx, dy);
-
-               pthis[resize_rect_name]
-                    .attr("x", rect_width() - 20)
-                    .attr("y", rect_height() - 20);
-            });
-
-      var drag_resize = d3.behavior.drag().origin(Object)
-        .on( "dragstart", function() {
-           d3.event.sourceEvent.stopPropagation();
-           d3.event.sourceEvent.preventDefault();
-
-           acc_x = 0; acc_y = 0;
-           pad_w = Number(pthis.svg_pad(true).attr("width")) - Number(draw_g.attr("x"));
-           pad_h = Number(pthis.svg_pad(true).attr("height")) - Number(draw_g.attr("y"));
-           pthis[drag_rect_name] =
-              pthis.svg_pad(true)
-                .append("rect")
-                .attr("class", "zoom")
-                .attr("id", drag_rect_name)
-                .attr("x",  draw_g.attr("x"))
-                .attr("y", draw_g.attr("y"))
-                .attr("width", rect_width())
-                .attr("height", rect_height())
-                .style("cursor", "se-resize");
-         }).on("drag", function() {
-            d3.event.sourceEvent.preventDefault();
-
-            var w = Number(pthis[drag_rect_name].attr("width"));
-            var h = Number(pthis[drag_rect_name].attr("height"));
-            var dx = d3.event.dx, dy = d3.event.dy;
-            if ((acc_x>0) && (dx<0)) { acc_x += dx; dx = 0; }
-            if ((acc_y>0) && (dy<0)) { acc_y += dy; dy = 0; }
-            if (w+dx > pad_w) acc_x += dx; else w+=dx;
-            if (h+dy > pad_h) acc_y += dy; else h+=dy;
-            pthis[drag_rect_name].attr("width", w);
-            pthis[drag_rect_name].attr("height", h);
-
-            JSROOT.Painter.moveChildToEnd(pthis[drag_rect_name]);
-
-            d3.event.sourceEvent.stopPropagation();
-         }).on( "dragend", function() {
-            d3.event.sourceEvent.preventDefault();
-            pthis[drag_rect_name].style("cursor", "auto");
-
-            var newwidth = Number(pthis[drag_rect_name].attr("width"));
-            var newheight = Number(pthis[drag_rect_name].attr("height"));
-
-            draw_g.attr('width', newwidth).attr('height', newheight);
-
-            pthis[drag_rect_name].remove();
-            pthis[drag_rect_name] = null;
-
-            callback.resize(newwidth, newheight);
-
-            // do it after call-back - rectangle has correct coordinates
-            pthis[resize_rect_name]
-              .attr("x", newwidth - 20)
-              .attr("y", newheight - 20);
-         });
-
-      draw_g.call(drag_move);
-
-      this[resize_rect_name] =
-         draw_g.append("rect")
-                  .attr("class", resize_rect_name)
+      var resize_rect =
+         pthis.draw_g.append("rect")
                   .style("opacity", "0")
                   .style("cursor", "se-resize")
                   .attr("x", rect_width() - 20)
                   .attr("y", rect_height() - 20)
                   .attr("width", 20)
-                  .attr("height", 20)
-                  .call(drag_resize);
+                  .attr("height", 20);
+
+      var drag_rect = null;
+
+      var drag_move = d3.behavior.drag().origin(Object)
+         .on("dragstart",  function() {
+            if (detectRightButton(d3.event.sourceEvent)) return;
+
+            d3.event.sourceEvent.preventDefault();
+            acc_x = 0; acc_y = 0;
+            pad_w = pthis.pad_width() - rect_width();
+            pad_h = pthis.pad_height() - rect_height();
+
+            drag_rect = d3.select(pthis.draw_g.node().parentNode).append("rect")
+                 .classed("zoom", true)
+                 .attr("x",  pthis.draw_g.attr("x"))
+                 .attr("y", pthis.draw_g.attr("y"))
+                 .attr("width", rect_width())
+                 .attr("height", rect_height())
+                 .style("cursor", "move");
+          }).on("drag", function() {
+               if (drag_rect == null) return;
+
+               d3.event.sourceEvent.preventDefault();
+
+               var x = Number(drag_rect.attr("x")), y = Number(drag_rect.attr("y"));
+               var dx = d3.event.dx, dy = d3.event.dy;
+
+               if ((acc_x<0) && (dx>0)) { acc_x+=dx; dx=0; if (acc_x>0) { dx=acc_x; acc_x=0; }}
+               if ((acc_x>0) && (dx<0)) { acc_x+=dx; dx=0; if (acc_x<0) { dx=acc_x; acc_x=0; }}
+               if ((acc_y<0) && (dy>0)) { acc_y+=dy; dy=0; if (acc_y>0) { dy=acc_y; acc_y=0; }}
+               if ((acc_y>0) && (dy<0)) { acc_y+=dy; dy=0; if (acc_y<0) { dy=acc_y; acc_y=0; }}
+
+               if (x+dx<0) { acc_x+=(x+dx); x=0; } else
+               if (x+dx>pad_w) { acc_x+=(x+dx-pad_w); x=pad_w; } else x+=dx;
+
+               if (y+dy<0) { acc_y+=(y+dy); y = 0; } else
+               if (y+dy>pad_h) { acc_y+=(y+dy-pad_h); y=pad_h; } else y+=dy;
+
+               drag_rect.attr("x", x).attr("y", y);
+
+               d3.event.sourceEvent.stopPropagation();
+          }).on("dragend", function() {
+               if (drag_rect==null) return;
+
+               d3.event.sourceEvent.preventDefault();
+
+               drag_rect.style("cursor", "auto");
+
+               var x = Number(drag_rect.attr("x")), y = Number(drag_rect.attr("y"));
+               var dx = x - Number(pthis.draw_g.attr("x")), dy = y - Number(pthis.draw_g.attr("y"));
+
+               drag_rect.remove();
+               drag_rect = null;
+
+               pthis.draw_g.attr("x", x).attr("y", y)
+                           .attr("transform", "translate(" + x + "," + y + ")");
+
+               resize_rect.attr("x", rect_width() - 20)
+                          .attr("y", rect_height() - 20);
+
+               if ('move' in callback) callback.move(x, y, dx, dy);
+               else if ('obj' in callback) {
+                  callback.obj['fX1NDC'] += dx / pthis.pad_width();
+                  callback.obj['fX2NDC'] += dx / pthis.pad_width();
+                  callback.obj['fY1NDC'] -= dy / pthis.pad_height();
+                  callback.obj['fY2NDC'] -= dy / pthis.pad_height();
+               }
+            });
+
+      var drag_resize = d3.behavior.drag().origin(Object)
+        .on( "dragstart", function() {
+           if (detectRightButton(d3.event.sourceEvent)) return;
+
+           d3.event.sourceEvent.stopPropagation();
+           d3.event.sourceEvent.preventDefault();
+
+           acc_x = 0; acc_y = 0;
+           pad_w = pthis.pad_width() - Number(pthis.draw_g.attr("x"));
+           pad_h = pthis.pad_height() - Number(pthis.draw_g.attr("y"));
+           drag_rect = d3.select(pthis.draw_g.node().parentNode).append("rect")
+                .classed("zoom",true)
+                .attr("x",  pthis.draw_g.attr("x"))
+                .attr("y", pthis.draw_g.attr("y"))
+                .attr("width", rect_width())
+                .attr("height", rect_height())
+                .style("cursor", "se-resize");
+         }).on("drag", function() {
+            if (drag_rect == null) return;
+
+            d3.event.sourceEvent.preventDefault();
+
+            var w = Number(drag_rect.attr("width")), h = Number(drag_rect.attr("height"));
+            var dx = d3.event.dx, dy = d3.event.dy;
+            if ((acc_x<0) && (dx>0)) { acc_x+=dx; dx=0; if (acc_x>0) { dx=acc_x; acc_x=0; }}
+            if ((acc_x>0) && (dx<0)) { acc_x+=dx; dx=0; if (acc_x<0) { dx=acc_x; acc_x=0; }}
+            if ((acc_y<0) && (dy>0)) { acc_y+=dy; dy=0; if (acc_y>0) { dy=acc_y; acc_y=0; }}
+            if ((acc_y>0) && (dy<0)) { acc_y+=dy; dy=0; if (acc_y<0) { dy=acc_y; acc_y=0; }}
+            if (w+dx>pad_w) { acc_x += (w+dx-pad_w); w=pad_w;} else
+            if (w+dx<0) { acc_x += (w+dx); w=0;} else w+=dx;
+            if (h+dy>pad_h) { acc_y += (h+dy-pad_h); h=pad_h; } else
+            if (h+dy<0) { acc_y += (h+dy); h=0; } else h+=dy;
+            drag_rect.attr("width", w).attr("height", h);
+
+            d3.event.sourceEvent.stopPropagation();
+         }).on( "dragend", function() {
+            if (drag_rect == null) return;
+
+            d3.event.sourceEvent.preventDefault();
+
+            drag_rect.style("cursor", "auto");
+
+            var newwidth = Number(drag_rect.attr("width"));
+            var newheight = Number(drag_rect.attr("height"));
+
+            pthis.draw_g.attr('width', newwidth).attr('height', newheight);
+
+            drag_rect.remove();
+            drag_rect = null;
+
+            resize_rect.attr("x", newwidth - 20)
+                       .attr("y", newheight - 20);
+
+            if ('resize' in callback) callback.resize(newwidth, newheight); else {
+                if ('obj' in callback) {
+                   callback.obj['fX2NDC'] = callback.obj['fX1NDC'] + newwidth  / pthis.pad_width();
+                   callback.obj['fY1NDC'] = callback.obj['fY2NDC'] - newheight / pthis.pad_height();
+                }
+                if (('redraw' in callback) &&
+                    (typeof pthis[callback.redraw] == 'function')) pthis[callback.redraw]();
+            }
+         });
+
+      pthis.draw_g.style("cursor", "move").call(drag_move);
+
+      resize_rect.call(drag_resize);
    }
 
    JSROOT.TObjectPainter.prototype.FindPainterFor = function(selobj,selname) {
@@ -1383,7 +1541,8 @@
       // can be used to find painter for some special objects, registered as
       // histogram functions
 
-      var painters = this.svg_pad() ? this.svg_pad().pad_painter.painters : null;
+      var ppp = this.svg_pad();
+      var painters = ppp.empty() ? null : ppp.property('pad_painter').painters;
       if (painters == null) return null;
 
       for (var n in painters) {
@@ -1404,6 +1563,248 @@
       // options
    }
 
+   JSROOT.TObjectPainter.prototype.StartTextDrawing = function(font_face, font_size, draw_g) {
+      // we need to preserve font to be able rescle at the end
+
+      if (!draw_g) draw_g = this.draw_g;
+
+      var font = JSROOT.Painter.getFontDetails(font_face, font_size);
+
+      draw_g.call(font.func);
+
+      draw_g.property('text_font', font);
+      draw_g.property('mathjax_use', false);
+      draw_g.property('text_factor', 0.);
+      draw_g.property('max_text_width', 0); // keep maximal text width, use it later
+   }
+
+   JSROOT.TObjectPainter.prototype.TextScaleFactor = function(value, draw_g) {
+      // function used to remember maximal text scaling factor
+      if (!draw_g) draw_g = this.draw_g;
+      if (value && (value > draw_g.property('text_factor'))) draw_g.property('text_factor', value);
+   }
+
+   JSROOT.TObjectPainter.prototype.GetBoundarySizes = function(elem) {
+      // getBBox does not work in mozilla when object is not displayed or not visisble :(
+      // getBoundingClientRect() returns wrong sizes for MathJax
+      // are there good solution?
+      var box = elem.getBoundingClientRect(); // works always, but returns sometimes wrong results
+      if (parseInt(box.width) > 0) box = elem.getBBox(); // works only for visisble
+      return { width : parseInt(box.width), height : parseInt(box.height) };
+   }
+
+   JSROOT.TObjectPainter.prototype.FinishTextDrawing = function(draw_g) {
+
+      if (!draw_g) draw_g = this.draw_g;
+
+      var svgs = null;
+
+      if (draw_g.property('mathjax_use')) {
+         draw_g.property('mathjax_use', false);
+         draw_g.property('_painter', this);
+
+         var missing = false;
+         svgs = draw_g.selectAll(".math_svg");
+
+         svgs.each(function() {
+            var fo_g = d3.select(this);
+            if (fo_g.node().parentNode !== draw_g.node()) return;
+            var entry = fo_g.property('_element');
+            if (d3.select(entry).select("svg").empty()) missing = true;
+         });
+
+         // is any svg missing we shold wait until drawing is really finished
+         if (missing)
+            return JSROOT.AssertPrerequisites('mathjax', { _this:draw_g, func: function() {
+               if (typeof MathJax != 'object') return;
+               MathJax.Hub.Queue(["FinishTextDrawing", this.property('_painter'), this]);
+            }});
+      }
+
+      if (svgs==null) svgs = draw_g.selectAll(".math_svg");
+
+      var painter = this;
+
+      // first remove dummy divs and check scaling coefficient
+      svgs.each(function() {
+         var fo_g = d3.select(this);
+         if (fo_g.node().parentNode !== draw_g.node()) return;
+         var entry = fo_g.property('_element'); fo_g.property('_element', null);
+
+         var vvv = d3.select(entry).select("svg");
+         if (vvv.empty()) {
+            JSROOT.console('MathJax SVG ouptut error');
+            return;
+         }
+
+         vvv.remove();
+         document.body.removeChild(entry);
+
+         fo_g.append(function() { return vvv.node(); });
+
+         if (fo_g.property('_scale')) {
+            var box = painter.GetBoundarySizes(fo_g.node());
+            painter.TextScaleFactor(1.* box.width / parseInt(fo_g.attr('width')), draw_g);
+            painter.TextScaleFactor(1.* box.height / parseInt(fo_g.attr('height')), draw_g);
+         }
+      });
+
+      // adjust font size
+      var f = draw_g.property('text_factor');
+      var font = draw_g.property('text_font');
+      if ((f>0) && ((f<0.9) || (f>1.))) {
+         font.size = Math.floor(font.size/f);
+         draw_g.call(font.func);
+      }
+
+      svgs.each(function() {
+         var fo_g = d3.select(this);
+         // only direct parent
+         if (fo_g.node().parentNode !== draw_g.node()) return;
+         var box = painter.GetBoundarySizes(fo_g.node());
+         var align = fo_g.property('_align');
+         var rotate = fo_g.property('_rotate');
+         var fo_w = parseInt(fo_g.attr('width')), fo_h = parseInt(fo_g.attr('height'));
+         var fo_x = parseInt(fo_g.attr('x')), fo_y = parseInt(fo_g.attr('y'));
+
+         if (fo_g.property('_scale')) {
+            if (align[0] == 'middle') fo_x += (fo_w - box.width)/2; else
+            if (align[0] == 'end')    fo_x += (fo_w - box.width);
+            if (align[1] == 'middle') fo_y += (fo_h - box.height)/2; else
+            if (align[1] == 'top' && !rotate) fo_y += (fo_h - box.height); else
+            if (align[1] == 'bottom' && rotate) fo_y += (fo_h - box.height);
+         } else {
+            if (align[0] == 'middle') fo_x -= box.width/2; else
+            if (align[0] == 'end')    fo_x -= box.width;
+            if (align[1] == 'middle') fo_y -= box.height/2; else
+            if (align[1] == 'bottom' && !rotate) fo_y -= box.height; else
+            if (align[1] == 'top' && rotate) fo_y -= box.height;
+         }
+
+         fo_g.attr('x', fo_x).attr('y', fo_y)  // use x/y while transform used for rotation
+             .attr('width', box.width+10).attr('height', box.height+10)  // width and height required by Chrome
+             .attr('visibility', null);
+      });
+
+      // now hidden text after rescaling can be shown
+      draw_g.selectAll('.hidden_text').attr('opacity', '1').classed('hidden_text',false);
+
+      return draw_g.property('max_text_width');
+   }
+
+   JSROOT.TObjectPainter.prototype.DrawText = function(align_arg, x, y, w, h, label, tcolor, latex_kind, draw_g) {
+      if (!draw_g) draw_g = this.draw_g;
+      var align;
+
+      if (typeof align_arg == 'string') {
+         align = align_arg.split(";");
+         if (align.length==1) align.push('middle');
+      } else {
+         align = ['start', 'middle'];
+         if ((align_arg / 10) >= 3) align[0] = 'end'; else
+         if ((align_arg / 10) >= 2) align[0] = 'middle';
+         if ((align_arg % 10) == 0) align[1] = 'bottom'; else
+         if ((align_arg % 10) == 1) align[1] = 'bottom'; else
+         if ((align_arg % 10) == 3) align[1] = 'top';
+      }
+
+      var scale = (w>0) && (h>0);
+
+      if (latex_kind==null) latex_kind = 1;
+      if (latex_kind<2)
+         if (!JSROOT.Painter.isAnyLatex(label)) latex_kind = 0;
+
+      var use_normal_text = ((JSROOT.MathJax<1) && (latex_kind!=2)) || (latex_kind<1);
+
+      // only Firefox can correctly rotate incapsulated SVG, produced by MathJax
+      if (!use_normal_text && (h<0) && !JSROOT.browser.isFirefox) use_normal_text = true;
+
+      if (use_normal_text) {
+         if (latex_kind>0) label = JSROOT.Painter.translateLaTeX(label);
+
+         var pos_x = x.toFixed(1), pos_y = y.toFixed(1), pos_dy = null, middleline = false;
+
+         if (w>0) {
+            // adjust x position when scale into specified rectangle
+            if (align[0]=="middle") pos_x = (x+w*0.5).toFixed(1); else
+            if (align[0]=="end") pos_x = (x+w).toFixed(1);
+         }
+
+         if (h>0) {
+            if (align[1] == 'bottom') pos_y = (y + h).toFixed(1); else
+            if (align[1] == 'top') pos_dy = ".8em"; else {
+               pos_y = (y + h/2).toFixed(1);
+               if (JSROOT.browser.isIE) pos_dy = ".4em"; else middleline = true;
+            }
+         } else
+         if (h==0) {
+            if (align[1] == 'top') pos_dy = ".8em"; else
+            if (align[1] == 'middle') {
+               if (JSROOT.browser.isIE) pos_dy = ".4em"; else middleline = true;
+            }
+         }
+
+         var txt = draw_g.append("text")
+                         .attr("text-anchor", align[0])
+                         .attr("x", pos_x)
+                         .attr("y", pos_y)
+                         .attr("fill", tcolor ? tcolor : null)
+                         .text(label);
+         if (pos_dy!=null) txt.attr("dy", pos_dy);
+         if (middleline) txt.attr("dominant-baseline", "middle");
+         if ((!scale) && (h==-270)) txt.attr("transform", "rotate(270, 0, 0)");
+
+         var box = this.GetBoundarySizes(txt.node());
+
+         if (scale) txt.classed('hidden_text',true).attr('opacity','0'); // hide rescale elements
+
+         if (box.width > draw_g.property('max_text_width')) draw_g.property('max_text_width', box.width);
+         if ((w>0) && scale) this.TextScaleFactor(1.*box.width / w, draw_g);
+         if ((h>0) && scale) this.TextScaleFactor(1.*box.height / h, draw_g);
+
+         return box.width;
+      }
+
+      w = Math.round(w); h = Math.round(h);
+      x = Math.round(x); y = Math.round(y);
+
+      var rotate = false;
+
+      if (!scale) {
+         if (h==-270) rotate = true;
+         w = this.pad_width(); h = this.pad_height(); // artifical values, big enough to see output
+         // w = 5; h = 5;
+      }
+
+      var fo_g = draw_g.append("svg")
+                       .attr('x',x).attr('y',y)  // set x,y, width,height attribute to be able apply alignment later
+                       .attr('width',w).attr('height',h)
+                       .attr('class', 'math_svg')
+                       .attr('visibility','hidden')
+                       .property('_scale', scale)
+                       .property('_rotate', rotate)
+                       .property('_align', align);
+
+      if (rotate) fo_g.attr("transform", "rotate(270, 0, 0)");
+
+      var element = document.createElement("div");
+      d3.select(element).style("visibility", "hidden")
+                        .style("overflow", "hidden")
+                        .style("position", "absolute")
+                        .html(JSROOT.Painter.translateMath(label, latex_kind, tcolor));
+      document.body.appendChild(element)
+
+      draw_g.property('mathjax_use', true);  // one need to know that mathjax is used
+      fo_g.property('_element', element);
+
+      JSROOT.AssertPrerequisites('mathjax', { _this:element, func: function() {
+         if (typeof MathJax == 'object')
+            MathJax.Hub.Queue(["Typeset", MathJax.Hub, this]);
+      }});
+
+      return 0;
+   }
+
    // ===========================================================
 
    JSROOT.TFramePainter = function(tframe) {
@@ -1418,27 +1819,26 @@
    }
 
    JSROOT.TFramePainter.prototype.Shrink = function(shrink_left, shrink_right) {
-      var ndc = this.svg_frame() ? this.svg_frame()['NDC'] : null;
+      var ndc = this.svg_frame().property('NDC');
       if (ndc) {
-         ndc.x1 += shrink_left;
-         ndc.x2 -= shrink_right;
+         ndc.fX1NDC += shrink_left;
+         ndc.fX2NDC -= shrink_right;
       }
    }
 
    JSROOT.TFramePainter.prototype.DrawFrameSvg = function() {
-      var width = Number(this.svg_pad(true).attr("width")),
-          height = Number(this.svg_pad(true).attr("height"));
+      var width = this.pad_width(), height = this.pad_height();
       var w = width, h = height;
 
-      var ndc = this.svg_frame() ? this.svg_frame()['NDC'] : null;
-      if (ndc == null) ndc = { x1 : 0.07, y1 : 0.12, x2 : 0.95, y2 : 0.88 };
+      var ndc = this.svg_frame().empty() ? null : this.svg_frame().property('NDC');
+      if (ndc == null) ndc = JSROOT.clone(JSROOT.gStyle.FrameNDC);
 
       var root_pad = this.root_pad();
 
-      var lm = width * ndc.x1;
-      var rm = width * (1 - ndc.x2);
-      var tm = height * ndc.y1;
-      var bm = height * (1 - ndc.y2);
+      var lm = width * ndc.fX1NDC;
+      var rm = width * (1 - ndc.fX2NDC);
+      var tm = height * ndc.fY1NDC;
+      var bm = height * (1 - ndc.fY2NDC);
 
       var framecolor = this.createAttFill('white'),
           lineatt = JSROOT.Painter.createAttLine('black'),
@@ -1487,12 +1887,12 @@
       if (framecolor.color == 'none') framecolor.color = 'white';
 
       // this is svg:g object - container for every other items belonging to frame
-      var frame_g = this.svg_pad(true).select(".root_frame");
+      var frame_g = this.svg_pad().select(".root_frame");
 
       var top_rect = null;
 
       if (frame_g.empty()) {
-         frame_g = this.svg_pad(true).select(".frame_layer").append("svg:g").attr("class", "root_frame");
+         frame_g = this.svg_pad().select(".frame_layer").append("svg:g").attr("class", "root_frame");
 
          top_rect = frame_g.append("svg:rect");
 
@@ -1500,20 +1900,21 @@
          frame_g.append('svg:g').attr('class','grid_layer');
          frame_g.append('svg:g').attr('class','main_layer');
          frame_g.append('svg:g').attr('class','axis_layer');
+         frame_g.append('svg:g').attr('class','upper_layer');
       } else {
          top_rect = frame_g.select("rect");
       }
 
       // calculate actual NDC coordinates, use them to properly locate PALETTE
-      frame_g.node()['NDC'] = {
-         x1 : lm / width,
-         x2 : (lm + w) / width,
-         y1 : tm / height,
-         y2 : (tm + h) / height
-      };
+      frame_g.property('NDC', {
+         fX1NDC : lm / width,
+         fX2NDC : (lm + w) / width,
+         fY1NDC : tm / height,
+         fY2NDC : (tm + h) / height
+      });
 
       // simple workaround to access painter via frame container
-      frame_g.node()['frame_painter'] = this;
+      frame_g.property('frame_painter', this);
 
       lm = Math.round(lm); tm = Math.round(tm);
       w = Math.round(w); h = Math.round(h);
@@ -1540,7 +1941,7 @@
       var p = new JSROOT.TFramePainter(obj);
       p.SetDivId(divid);
       p.DrawFrameSvg();
-      return p;
+      return p.DrawingReady();
    }
 
    // =========================================================================
@@ -1566,7 +1967,7 @@
 
    JSROOT.TF1Painter.prototype.CreateDummyHisto = function() {
       var xmin = 0, xmax = 0, ymin = 0, ymax = 0;
-      if (this.tf1['fNsave'] > 0) {
+      if (this.tf1['fSave'].length > 0) {
          // in the case where the points have been saved, useful for example
          // if we don't have the user's function
          var nb_points = this.tf1['fNpx'];
@@ -1635,7 +2036,7 @@
 
       var pthis = this;
 
-      if (this.tf1['fNsave'] > 0) {
+      if (this.tf1['fSave'].length > 0) {
          // in the case where the points have been saved, useful for example
          // if we don't have the user's function
          var nb_points = this.tf1['fNpx'];
@@ -1672,8 +2073,7 @@
    }
 
    JSROOT.TF1Painter.prototype.DrawBins = function() {
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
+      var w = this.frame_width(), h = this.frame_height();
 
       this.RecreateDrawG();
 
@@ -1732,21 +2132,15 @@
 
    JSROOT.Painter.drawFunction = function(divid, tf1) {
       var painter = new JSROOT.TF1Painter(tf1);
-
       painter.SetDivId(divid, -1);
-
       if (painter.main_painter() == null) {
          var histo = painter.CreateDummyHisto();
          JSROOT.Painter.drawHistogram1D(divid, histo);
       }
-
       painter.SetDivId(divid);
-
       painter.CreateBins();
-
       painter.DrawBins();
-
-      return painter;
+      return painter.DrawingReady();
    }
 
    // =======================================================================
@@ -1755,6 +2149,7 @@
       JSROOT.TObjectPainter.call(this, graph);
       this.graph = graph;
       this.ownhisto = false; // indicate if graph histogram was drawn for axes
+      this.bins = null;
    }
 
    JSROOT.TGraphPainter.prototype = Object.create(JSROOT.TObjectPainter.prototype);
@@ -1769,21 +2164,16 @@
 
    JSROOT.TGraphPainter.prototype.DecodeOptions = function(opt) {
       this.draw_all = true;
-      this.optionLine = 0;
-      this.optionAxis = 0;
-      this.optionCurve = 0;
-      this.optionStar = 0;
-      this.optionMark = 0;
-      this.optionBar = 0;
-      this.optionR = 0;
-      this.optionOne = 0;
-      this.optionE = 0;
-      this.optionFill = 0;
-      this.optionZ = 0;
-      this.optionCurveFill = 0;
-      this.draw_errors = true;
-      this.optionNone = 0; // no any drawing
-      this.opt = "LP";
+      JSROOT.extend(this, { optionLine:0, optionAxis:0, optionCurve:0, optionRect:0,
+                            optionMark:0, optionBar:0, optionR:0, optionE:0, optionEF:0,
+                            optionFill:0, optionZ:0, optionBrackets:0,
+                            opt:"LP", out_of_range: false, has_errors: false, draw_errors: false, is_bent:false });
+
+      this.is_bent = this.graph['_typename'] == 'TGraphBentErrors';
+      this.has_errors = (this.graph['_typename'] == 'TGraphErrors' ||
+                         this.graph['_typename'] == 'TGraphAsymmErrors' ||
+                         this.is_bent || this.graph['_typename'].match(/^RooHist/));
+      this.draw_errors = this.has_errors;
 
       if ((opt != null) && (opt != "")) {
          this.opt = opt.toUpperCase();
@@ -1791,41 +2181,60 @@
       }
       if (this.opt.indexOf('L') != -1)
          this.optionLine = 1;
-      if (this.opt.indexOf('A') != -1)
-         this.optionAxis = 1;
-      if (this.opt.indexOf('C') != -1)
-         this.optionCurve = 1;
-      if (this.opt.indexOf('*') != -1)
-         this.optionStar = 1;
-      if (this.opt.indexOf('P') != -1)
-         this.optionMark = 1;
-      if (this.opt.indexOf('B') != -1)
-         this.optionBar = 1;
-      if (this.opt.indexOf('R') != -1)
-         this.optionR = 1;
-      if (this.opt.indexOf('1') != -1)
-         this.optionOne = 1;
       if (this.opt.indexOf('F') != -1)
          this.optionFill = 1;
-      if (this.opt.indexOf('2') != -1 || this.opt.indexOf('3') != -1
-            || this.opt.indexOf('4') != -1 || this.opt.indexOf('5') != -1)
-         this.optionE = 1;
+      if (this.opt.indexOf('A') != -1)
+         this.optionAxis = 1;
+      if (this.opt.indexOf('C') != -1) {
+         this.optionCurve = 1;
+         if (this.optionFill==0) this.optionLine = 1;
+      }
+      if (this.opt.indexOf('*') != -1)
+         this.optionMark = 2;
+      if (this.opt.indexOf('P') != -1)
+         this.optionMark = 1;
+      if (this.opt.indexOf('B') != -1) {
+         this.optionBar = 1;
+         this.draw_errors = false;
+      }
+      if (this.opt.indexOf('R') != -1)
+         this.optionR = 1;
+
+      if (this.opt.indexOf('[]') != -1) {
+         this.optionBrackets = 1;
+         this.draw_errors = false;
+      }
+
+      if (this.opt.indexOf('0') != -1) {
+         this.optionMark = 1;
+         this.draw_errors = true;
+         this.out_of_range = true;
+      }
+
+      if (this.opt.indexOf('1') != -1) {
+         if (this.optionBar == 1) this.optionBar = 2;
+      }
+      if (this.opt.indexOf('2') != -1)
+         this.optionRect = 1;
+
+      if (this.opt.indexOf('3') != -1) {
+         this.optionEF = 1;
+         this.optionLine = 0;
+         this.draw_errors = false;
+      }
+      if (this.opt.indexOf('4') != -1) {
+         this.optionEF = 2;
+         this.optionLine = 0;
+         this.draw_errors = false;
+      }
+
+      if (this.opt.indexOf('2') != -1 || this.opt.indexOf('5') != -1) this.optionE = 1;
 
       // if no drawing option is selected and if opt<>' ' nothing is done.
-      if (this.optionLine + this.optionFill + this.optionCurve + this.optionStar + this.optionMark + this.optionBar + this.optionE == 0) {
+      if (this.optionLine + this.optionFill + this.optionMark + this.optionBar + this.optionE +
+          this.optionEF + this.optionRect + this.optionBrackets == 0) {
          if (this.opt.length == 0)
             this.optionLine = 1;
-         else {
-            this.optionNone = 1;
-            return;
-         }
-      }
-      if (this.optionStar)
-         this.graph['fMarkerStyle'] = 3;
-
-      if (this.optionCurve && this.optionFill) {
-         this.optionCurveFill = 1;
-         this.optionFill = 0;
       }
 
       if (this.graph['_typename'] == 'TGraphErrors') {
@@ -1834,72 +2243,408 @@
          if (maxEX < 1.0e-300 && maxEY < 1.0e-300)
             this.draw_errors = false;
       }
-      this.seriesType = 'scatter';
-      if (this.optionBar == 1) this.seriesType = 'bar';
-      this.showMarker = false;
-      if (this.optionMark == 1 || this.optionStar == 1) this.showMarker = true;
 
-      if (this.optionLine == 1 || this.optionCurve == 1 || this.optionFill == 1)
-         this.seriesType = 'line';
-
-      if (this.optionBar == 1) {
-         this.binwidthx = (this.graph['fHistogram']['fXaxis']['fXmax'] -
-                           this.graph['fHistogram']['fXaxis']['fXmin'])
-                            / (this.graph['fNpoints'] - 1);
-      }
    }
 
    JSROOT.TGraphPainter.prototype.CreateBins = function() {
-      var pthis = this;
+      var gr = this.graph;
+      if (gr==null) return;
 
-      var npoints = this.graph['fNpoints'];
-      if ((this.graph._typename=="TCutG") && (npoints>3)) npoints--;
+      var npoints = gr['fNpoints'];
+      if ((gr._typename=="TCutG") && (npoints>3)) npoints--;
 
-      this.lineatt = JSROOT.Painter.createAttLine(this.graph);
+      var kind = 0;
+      if (gr['_typename'] == 'TGraphErrors') kind = 1; else
+      if (gr['_typename'] == 'TGraphAsymmErrors' || gr['_typename'] == 'TGraphBentErrors'
+          || gr['_typename'].match(/^RooHist/)) kind = 2;
 
       this.bins = d3.range(npoints).map(
             function(p) {
-               if (pthis.optionBar == 1) {
+               if (kind == 1)
                   return {
-                     x : pthis.graph['fX'][p] - (pthis.binwidthx / 2),
-                     y : pthis.graph['fY'][p], // graph['fHistogram']['fXaxis']['fXmin'],
-                     bw : pthis.binwidthx,
-                     bh : pthis.graph['fY'][p]
-                  }
-               } else if (pthis.graph['_typename'] == 'TGraphErrors') {
-                  return {
-                     x : pthis.graph['fX'][p],
-                     y : pthis.graph['fY'][p],
-                     exlow : pthis.graph['fEX'][p],
-                     exhigh : pthis.graph['fEX'][p],
-                     eylow : pthis.graph['fEY'][p],
-                     eyhigh : pthis.graph['fEY'][p]
+                     x : gr['fX'][p],
+                     y : gr['fY'][p],
+                     exlow : gr['fEX'][p],
+                     exhigh : gr['fEX'][p],
+                     eylow : gr['fEY'][p],
+                     eyhigh : gr['fEY'][p]
                   };
-               } else if (pthis.graph['_typename'] == 'TGraphAsymmErrors'
-                     || pthis.graph['_typename'].match(/^RooHist/)) {
+               if (kind == 2)
                   return {
-                     x : pthis.graph['fX'][p],
-                     y : pthis.graph['fY'][p],
-                     exlow : pthis.graph['fEXlow'][p],
-                     exhigh : pthis.graph['fEXhigh'][p],
-                     eylow : pthis.graph['fEYlow'][p],
-                     eyhigh : pthis.graph['fEYhigh'][p]
+                     x : gr['fX'][p],
+                     y : gr['fY'][p],
+                     exlow : gr['fEXlow'][p],
+                     exhigh : gr['fEXhigh'][p],
+                     eylow : gr['fEYlow'][p],
+                     eyhigh : gr['fEYhigh'][p]
                   };
-               } else {
-                  return {
-                     x : pthis.graph['fX'][p],
-                     y : pthis.graph['fY'][p]
+               return {
+                     x : gr['fX'][p],
+                     y : gr['fY'][p]
                   };
-               }
             });
+   }
 
-      this.exclusionGraph = false;
-      if (this.lineatt.width <= 99) return;
+   JSROOT.TGraphPainter.prototype.CreateHistogram = function() {
+      // bins should be created
 
-      // special handling of exclusion graphs
+      var xmin, xmax, ymin, ymax;
 
-      this.exclusionGraph = true;
+      if (this.bins==null) {
+         xmin = 0; xmax = 1; ymin = 0; ymax = 1;
+      } else
+      for (var n in this.bins) {
+         var pnt = this.bins[n];
+         if ((xmin==null) || (pnt.x < xmin)) xmin = pnt.x;
+         if ((xmax==null) || (pnt.x > xmax)) xmax = pnt.x;
+         if ((ymin==null) || (pnt.y < ymin)) ymin = pnt.y;
+         if ((ymax==null) || (pnt.y > ymax)) ymax = pnt.y;
+         if ('exlow' in pnt) {
+            xmin = Math.min(xmin, pnt.x - pnt.exlow, pnt.x + pnt.exhigh);
+            xmax = Math.max(xmax, pnt.x - pnt.exlow, pnt.x + pnt.exhigh);
+            ymin = Math.min(ymin, pnt.y - pnt.eylow, pnt.y + pnt.eylow);
+            ymax = Math.max(ymax, pnt.y - pnt.eylow, pnt.y + pnt.eylow);
+         }
+      }
 
+      if (xmin == xmax) xmax+=1;
+      if (ymin == ymax) ymax+=1;
+      var dx = (xmax - xmin)*0.1;
+      var dy = (ymax - ymin)*0.1;
+      var uxmin = xmin - dx, uxmax = xmax + dx;
+      var minimum = ymin - dy, maximum = ymax + dy;
+      if ((uxmin<0) && (xmin>=0)) uxmin = xmin*0.9;
+      if ((uxmax>0) && (xmax<=0)) uxmax = 0;
+
+      if (this.graph.fMinimum != -1111) minimum = ymin = this.graph.fMinimum;
+      if (this.graph.fMaximum != -1111) maximum = ymax = this.graph.fMaximum;
+      if ((minimum < 0) && (ymin >=0)) minimum = 0.9*ymin;
+
+      var histo = JSROOT.CreateTH1(100);
+      histo.fName = this.graph.fName + "_h";
+      histo.fTitle = this.graph.fTitle;
+      histo.fXaxis.fXmin = uxmin;
+      histo.fXaxis.fXmax = uxmax;
+      histo.fYaxis.fXmin = minimum;
+      histo.fYaxis.fXmax = maximum;
+      histo.fXaxis.fMinimum = minimum;
+      histo.fXaxis.fMaximum = maximum;
+      histo.fBits = histo.fBits | JSROOT.TH1StatusBits.kNoStats;
+      return histo;
+   }
+
+   JSROOT.TGraphPainter.prototype.DrawBars = function() {
+      var bins = this.bins;
+      if (bins.length == 1) {
+         // special case of single bar
+         var binwidthx = (this.graph['fHistogram']['fXaxis']['fXmax'] -
+               this.graph['fHistogram']['fXaxis']['fXmin']);
+         bins[0].xl = bins[0].x - binwidthx/2;
+         bins[0].xr = bins[0].x + binwidthx/2;
+      } else
+      for (var n=0;n<bins.length;n++) {
+         if (n>0) bins[n].xl = (bins[n].x + bins[n-1].x)/2;
+         if (n<bins.length-1)
+            bins[n].xr = (bins[n].x + bins[n+1].x)/2;
+         else
+            bins[n].xr = 2*bins[n].x - bins[n].xl;
+         if (n==0) bins[n].xl = 2*bins[0].x - bins[0].xr;
+      }
+
+      var h = this.frame_height();
+      var normal = (this.optionBar != 1);
+      var pmain = this.main_painter();
+
+      return this.draw_g.selectAll("bar_graph")
+               .data(bins).enter()
+               .append("svg:rect")
+               .attr("x", function(d) { return (pmain.grx(d.xl)+0.5).toFixed(1); })
+               .attr("y", function(d) {
+                  if (normal || (d.y>=0)) return pmain.gry(d.y).toFixed(1);
+                  return pmain.gry(0).toFixed(1);
+                })
+               .attr("width", function(d) { return (pmain.grx(d.xr) - pmain.grx(d.xl)-1).toFixed(1); })
+               .attr("height", function(d) {
+                  var hh = pmain.gry(d.y);
+                  if (normal) return hh>h ? 0 : (h - hh).toFixed(1);
+                  return (d.y<0) ? (hh - pmain.gry(0)).toFixed(1) : (pmain.gry(0) - hh).toFixed(1);
+                })
+               .call(this.fillatt.func);
+   }
+
+   JSROOT.TGraphPainter.prototype.DrawBins = function() {
+      var w = this.frame_width(), h = this.frame_height();
+
+      this.RecreateDrawG();
+
+      var pthis = this;
+      var pmain = this.main_painter();
+
+      this.lineatt = JSROOT.Painter.createAttLine(this.graph);
+      this.fillatt = this.createAttFill(this.graph);
+
+      function TooltipText(d) {
+
+         var res = "x = " + pmain.AxisAsText("x", d.x) + "\n" +
+                   "y = " + pmain.AxisAsText("y", d.y);
+
+         if (pthis.draw_errors  && !pmain.x_time && ('exlow' in d) && ((d.exlow!=0) || (d.exhigh!=0)))
+            res += "\nerror x = -" + pmain.AxisAsText("x", d.exlow) +
+                              "/+" + pmain.AxisAsText("x", d.exhigh);
+
+         if (pthis.draw_errors  && !pmain.y_time && ('eylow' in d) && ((d.eylow!=0) || (d.eyhigh!=0)) )
+            res += "\nerror y = -" + pmain.AxisAsText("y", d.eylow) +
+                               "/+" + pmain.AxisAsText("y", d.eyhigh);
+
+         return res;
+      }
+
+      if (this.optionEF > 0) {
+         var area = d3.svg.area()
+                        .x(function(d) { return pmain.grx(d.x).toFixed(1); })
+                        .y0(function(d) { return pmain.gry(d.y - d.eylow).toFixed(1); })
+                        .y1(function(d) { return pmain.gry(d.y + d.eyhigh).toFixed(1); });
+         if (this.optionEF > 1) area = area.interpolate(JSROOT.gStyle.Interpolate);
+         this.draw_g.append("svg:path")
+                    .attr("d", area(this.bins))
+                    .style("stroke", "none")
+                    .call(this.fillatt.func);
+      }
+
+      var line = d3.svg.line()
+                  .x(function(d) { return pmain.grx(d.x).toFixed(1); })
+                  .y(function(d) { return pmain.gry(d.y).toFixed(1); });
+
+      // use smoothing of the line by basic spline interpolation
+      if (this.optionCurve == 1)
+         line = line.interpolate(JSROOT.gStyle.Interpolate);
+
+      if (this.optionBar) {
+         var nodes = this.DrawBars();
+         if (JSROOT.gStyle.Tooltip)
+            nodes.append("svg:title").text(TooltipText);
+      }
+
+      if (this.lineatt.width > 99) {
+         /* first draw exclusion area, and then the line */
+         this.optionMark = 0;
+
+         this.DrawExclusion(line);
+      }
+
+      if (this.optionLine == 1 || this.optionFill == 1) {
+
+         var close_symbol = "";
+         if (this.graph._typename=="TCutG") close_symbol = " Z";
+
+         var lineatt = this.lineatt;
+         if (this.optionLine == 0) lineatt = JSROOT.Painter.createAttLine('none');
+
+         if (this.optionFill != 1) {
+            this.fillatt.color = 'none';
+         }
+
+         this.draw_g.append("svg:path")
+               .attr("d", line(pthis.bins) + close_symbol)
+               .attr("class", "draw_line")
+               .style("pointer-events","none")
+               .call(lineatt.func)
+               .call(this.fillatt.func);
+
+         // do not add tooltip for line, when we wants to add markers
+         if (JSROOT.gStyle.Tooltip && (this.optionMark==0))
+            this.draw_g.selectAll("draw_line")
+                       .data(pthis.bins).enter()
+                       .append("svg:circle")
+                       .attr("cx", function(d) { return pmain.grx(d.x).toFixed(1); })
+                       .attr("cy", function(d) { return Math.round(pmain.gry(d.y)); })
+                       .attr("r", 3)
+                       .style("opacity", 0)
+                       .append("svg:title")
+                       .text(TooltipText);
+      }
+
+      var nodes = null;
+
+      if (this.draw_errors || this.optionMark || this.optionRect || this.optionBrackets) {
+         var draw_bins = new Array;
+         for (var i in this.bins) {
+            var pnt = this.bins[i];
+            var grx = pmain.grx(pnt.x);
+            var gry = pmain.gry(pnt.y);
+            if (!this.out_of_range && ((grx<0) || (grx>w) || (gry<0) || (gry>h))) continue;
+
+            // caluclate graphical coordinates
+            pnt['grx1'] = grx.toFixed(1);
+            pnt['gry1'] = gry.toFixed(1);
+
+            if (this.has_errors) {
+               pnt['grx0'] = (pmain.grx(pnt.x - pnt.exlow) - grx).toFixed(1);
+               pnt['grx2'] = (pmain.grx(pnt.x + pnt.exhigh) - grx).toFixed(1);
+               pnt['gry0'] = (pmain.gry(pnt.y - pnt.eylow) - gry).toFixed(1);
+               pnt['gry2'] = (pmain.gry(pnt.y + pnt.eyhigh) - gry).toFixed(1);
+
+               if (this.is_bent) {
+                  pnt['grdx0'] = pmain.gry(pnt.y + this.graph.fEXlowd[i]) - gry;
+                  pnt['grdx2'] = pmain.gry(pnt.y + this.graph.fEXhighd[i]) - gry;
+                  pnt['grdy0'] = pmain.grx(pnt.x + this.graph.fEYlowd[i]) - grx;
+                  pnt['grdy2'] = pmain.grx(pnt.x + this.graph.fEYhighd[i]) - grx;
+               } else {
+                  pnt['grdx0'] = 0; // in y direction
+                  pnt['grdx2'] = 0; // in y direction
+                  pnt['grdy0'] = 0; // in x direction
+                  pnt['grdy2'] = 0; // in x direction
+               }
+            }
+
+            draw_bins.push(pnt);
+         }
+         // here are up to five elements are collected, try to group them
+         nodes = this.draw_g.selectAll("g.node")
+                     .data(draw_bins)
+                     .enter()
+                     .append("svg:g")
+                     .attr("transform", function(d) { return "translate(" + d.grx1 + "," + d.gry1 + ")"; });
+      }
+
+      if (JSROOT.gStyle.Tooltip && nodes)
+         nodes.append("svg:title").text(TooltipText);
+
+      if (this.optionRect) {
+         nodes.filter(function(d) { return (d.exlow > 0) && (d.exhigh > 0) && (d.eylow > 0) && (d.eyhigh > 0); })
+           .append("svg:rect")
+           .attr("x", function(d) { return d.grx0; })
+           .attr("y", function(d) { return d.gry2; })
+           .attr("width", function(d) { return d.grx2 - d.grx0; })
+           .attr("height", function(d) { return d.gry0 - d.gry2; })
+           .call(this.fillatt.func);
+      }
+
+      if (this.optionBrackets) {
+         var prnt = nodes.filter(function(d) { return (d.eylow > 0); });
+         prnt.append("svg:line")
+            .attr("x1", -5)
+            .attr("y1", function(d) { return d.gry0; })
+            .attr("x2", 5)
+            .attr("y2", function(d) { return d.gry0; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width)
+         prnt.append("svg:line")
+            .attr("x1", -5)
+            .attr("y1", function(d) { return d.gry0; })
+            .attr("x2", -5)
+            .attr("y2", function(d) { return Number(d.gry0)-3; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+            .attr("x1", 5)
+            .attr("y1", function(d) { return d.gry0; })
+            .attr("x2", 5)
+            .attr("y2", function(d) { return Number(d.gry0)-3; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width);
+
+         prnt = nodes.filter(function(d) { return (d.eyhigh > 0); });
+         prnt.append("svg:line")
+            .attr("x1", -5)
+            .attr("y1", function(d) { return d.gry2; })
+            .attr("x2", 5)
+            .attr("y2", function(d) { return d.gry2; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+            .attr("x1", -5)
+            .attr("y1", function(d) { return d.gry2; })
+            .attr("x2", -5)
+            .attr("y2", function(d) { return Number(d.gry2)+3; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+            .attr("x1", 5)
+            .attr("y1", function(d) { return d.gry2; })
+            .attr("x2", 5)
+            .attr("y2", function(d) { return Number(d.gry2)+3; })
+            .style("stroke", this.lineatt.color)
+            .style("stroke-width", this.lineatt.width);
+      }
+
+      if (this.draw_errors) {
+         // lower x error
+         var prnt = nodes.filter(function(d) { return (d.exlow > 0); });
+         prnt.append("svg:line")
+             .attr("y1", 0).attr("x1", 0)
+             .attr("x2", function(d) { return d.grx0; })
+             .attr("y2", function(d) { return d.grdx0.toFixed(1); })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+             .attr("y1", function(d) { return (d.grdx0-3).toFixed(1); })
+             .attr("x1", function(d) { return d.grx0; })
+             .attr("y2", function(d) { return (d.grdx0+3).toFixed(1); })
+             .attr("x2", function(d) { return d.grx0; })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+
+         // high x error
+         prnt = nodes.filter(function(d) { return (d.exhigh > 0); });
+         prnt.append("svg:line")
+              .attr("x1", 0).attr("y1", 0)
+              .attr("x2", function(d) { return d.grx2; })
+              .attr("y2", function(d) { return d.grdx2.toFixed(1); })
+              .style("stroke", this.lineatt.color)
+              .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+              .attr("x1", function(d) { return d.grx2; })
+              .attr("y1", function(d) { return (d.grdx2-3).toFixed(1); })
+              .attr("x2", function(d) { return d.grx2; })
+              .attr("y2", function(d) { return (d.grdx2+3).toFixed(1); })
+              .style("stroke", this.lineatt.color)
+              .style( "stroke-width", this.lineatt.width);
+
+         // low y error
+         prnt = nodes.filter(function(d) { return (d.eylow > 0); });
+         prnt.append("svg:line")
+             .attr("x1", 0).attr("y1", 0)
+             .attr("x2", function(d) { return d.grdy0.toFixed(1); })
+             .attr("y2", function(d) { return d.gry0; })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+             .attr("x1", function(d) { return (d.grdy0-3).toFixed(1); })
+             .attr("y1", function(d) { return d.gry0; })
+             .attr("x2", function(d) { return (d.grdy0+3).toFixed(1); })
+             .attr("y2", function(d) { return d.gry0; })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+
+         // high y error
+         prnt = nodes.filter(function(d) { return (d.eyhigh > 0); })
+         prnt.append("svg:line")
+             .attr("x1", 0).attr("y1", 0)
+             .attr("x2", function(d) { return d.grdy2.toFixed(1); })
+             .attr("y2", function(d) { return d.gry2; })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+         prnt.append("svg:line")
+             .attr("x1", function(d) { return (d.grdy2-3).toFixed(1); })
+             .attr("y1", function(d) { return d.gry2; })
+             .attr("x2", function(d) { return (d.grdy2+3).toFixed(1); })
+             .attr("y2", function(d) { return d.gry2; })
+             .style("stroke", this.lineatt.color)
+             .style("stroke-width", this.lineatt.width);
+      }
+
+      if (this.optionMark) {
+         /* Add markers */
+         var style = (this.optionMark == 2) ? 3 : null;
+
+         var marker = JSROOT.Painter.createAttMarker(this.graph, style);
+
+         nodes.append("svg:path").call(marker.func);
+      }
+   }
+
+   JSROOT.TGraphPainter.prototype.DrawExclusion = function(line) {
       var normx, normy;
       var n = this.graph['fNpoints'];
       var xo = new Array(n + 2),
@@ -1907,10 +2652,8 @@
           xt = new Array(n + 2),
           yt = new Array(n + 2),
           xf = new Array(2 * n + 2),
-           yf = new Array(2 * n + 2);
+          yf = new Array(2 * n + 2);
       // negative value means another side of the line...
-
-
 
       var a, i, j, nf, wk = 1;
       if (this.lineatt.width > 32767) {
@@ -1921,8 +2664,7 @@
       this.lineatt.width = this.lineatt.width % 100; // line width
       if (this.lineatt.width > 0) this.optionLine = 1;
 
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
+      var w = this.frame_width(), h = this.frame_height();
 
       var ratio = w / h;
 
@@ -2096,8 +2838,6 @@
       xf[nf] = xt[0];
       yf[nf] = yt[0];
       nf++;
-      ;
-
 
       for (i = 0; i < nf; i++) {
          if (w > h) {
@@ -2114,9 +2854,7 @@
          if ((yf[i] <= 0.0) && this.main_painter().options.Logy) yf[i] = ymin;
       }
 
-      this.excl = d3.range(nf).map(function(p) { return { x : xf[p], y : yf[p] }; });
-
-      this.excl_ff = 1;
+      var excl = d3.range(nf).map(function(p) { return { x : xf[p], y : yf[p] }; });
 
       /* some clean-up */
       xo.splice(0, xo.length);
@@ -2131,205 +2869,13 @@
       yf.splice(0, yf.length);
       xf = null;
       yf = null;
-   }
 
-   JSROOT.TGraphPainter.prototype.DrawBins = function() {
-
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
-
-      this.RecreateDrawG();
-
-      var pthis = this;
-      var pmain = this.main_painter();
-
-      var fill = this.createAttFill(this.graph);
-
-      function TooltipText(d) {
-
-         var res = "x = " + pmain.AxisAsText("x", d.x) + "\n" +
-                   "y = " + pmain.AxisAsText("y", d.y);
-
-         if (pthis.draw_errors  && !pmain.x_time && ('exlow' in d) && ((d.exlow!=0) || (d.exhigh!=0)))
-            res += "\nerror x = -" + pmain.AxisAsText("x", d.exlow) +
-                              "/+" + pmain.AxisAsText("x", d.exhigh);
-
-         if (pthis.draw_errors  && !pmain.y_time && ('eylow' in d) && ((d.eylow!=0) || (d.eyhigh!=0)) )
-            res += "\nerror y = -" + pmain.AxisAsText("y", d.eylow) +
-                               "/+" + pmain.AxisAsText("y", d.eyhigh);
-
-         return res;
-      }
-
-      var line = d3.svg.line()
-                  .x(function(d) { return pmain.grx(d.x).toFixed(1); })
-                  .y(function(d) { return pmain.gry(d.y).toFixed(1); });
-
-      if (this.seriesType == 'bar') {
-         var fillcolor = JSROOT.Painter.root_colors[this.graph['fFillColor']];
-         if (typeof (fillcolor) == 'undefined') fillcolor = "rgb(204,204,204)";
-         /* filled bar graph */
-         var xdom = pmain.x.domain();
-         var xfactor = xdom[1] - xdom[0];
-         this.draw_errors = false;
-
-         var nodes = this.draw_g.selectAll("bar_graph")
-                  .data(pthis.bins).enter()
-                  .append("svg:rect")
-                  .attr("x", function(d) { return pmain.grx(d.x).toFixed(1); })
-                  .attr("y", function(d) { return pmain.gry(d.y).toFixed(1); })
-                  .attr("width", function(d) { return (w / (xdom[1] - xdom[0]))-1; })
-                  .attr("height", function(d) { return pmain.gry(d.y) - pmain.gry(d.y + d.bh); })
-                  .style("fill", fillcolor);
-
-         if (JSROOT.gStyle.Tooltip)
-            nodes.append("svg:title").text(function(d) { return "x = " + d.x.toPrecision(4) + " \nentries = " + d.y.toPrecision(4); });
-      }
-      if (this.exclusionGraph) {
-         /* first draw exclusion area, and then the line */
-         this.showMarker = false;
-
-         this.draw_g.append("svg:path")
-                     .attr("d", line(pthis.excl))
-                     .style("stroke", "none")
-                     .style("stroke-width", pthis.excl_ff)
-                     .call(fill.func)
-                     .style('opacity', 0.75);
-      }
-
-      if (this.seriesType == 'line') {
-
-         var close_symbol = "";
-         if (this.graph._typename=="TCutG") close_symbol = " Z";
-
-         var lineatt = this.lineatt;
-         if (this.optionLine == 0) lineatt = JSROOT.Painter.createAttLine('none');
-
-         if (this.optionFill != 1) {
-            fill.color = 'none';
-         }
-
-         this.draw_g.append("svg:path")
-               .attr("d", line(pthis.bins) + close_symbol)
-               .attr("class", "draw_line")
-               .style("pointer-events","none")
-               .call(lineatt.func)
-               .call(fill.func);
-
-         // do not add tooltip for line, when we wants to add markers
-         if (JSROOT.gStyle.Tooltip && !this.showMarker)
-            this.draw_g.selectAll("draw_line")
-                       .data(pthis.bins).enter()
-                       .append("svg:circle")
-                       .attr("cx", function(d) { return pmain.grx(d.x).toFixed(1); })
-                       .attr("cy", function(d) { return Math.round(pmain.gry(d.y)); })
-                       .attr("r", 3)
-                       .style("opacity", 0)
-                       .append("svg:title")
-                       .text(TooltipText);
-      }
-
-      if (this.draw_errors)
-         this.draw_errors = (this.graph['_typename'] == 'TGraphErrors' ||
-                             this.graph['_typename'] == 'TGraphAsymmErrors' ||
-                             this.graph['_typename'].match(/^RooHist/)) && !this.optionBar;
-
-      var nodes = null;
-
-      if (this.draw_errors || this.showMarker) {
-         var draw_bins = new Array;
-         for (var i in this.bins) {
-            var pnt = this.bins[i];
-            var grx = pmain.grx(pnt.x);
-            var gry = pmain.gry(pnt.y);
-            if ((grx<0) || (grx>w) || (gry<0) || (gry>h)) continue;
-
-            // caluclate graphical coordinates
-            pnt['grx1'] = grx.toFixed(1);
-            pnt['gry1'] = gry.toFixed(1);
-            if (pnt.exlow > 0)  pnt['grx0'] = (pmain.grx(pnt.x - pnt.exlow) - grx).toFixed(1);
-            if (pnt.exhigh > 0) pnt['grx2'] = (pmain.grx(pnt.x + pnt.exhigh) - grx).toFixed(1);
-            if (pnt.eylow > 0)  pnt['gry0'] = (pmain.gry(pnt.y - pnt.eylow) - gry).toFixed(1);
-            if (pnt.eyhigh > 0) pnt['gry2'] = (pmain.gry(pnt.y + pnt.eyhigh) - gry).toFixed(1);
-
-            draw_bins.push(pnt);
-         }
-         // here are up to five elements are collected, try to group them
-         nodes = this.draw_g.selectAll("g.node")
-                     .data(draw_bins)
-                     .enter()
-                     .append("svg:g")
-                     .attr("transform", function(d) { return "translate(" + d.grx1 + "," + d.gry1 + ")"; });
-      }
-
-      if (JSROOT.gStyle.Tooltip && nodes)
-         nodes.append("svg:title").text(TooltipText);
-
-      if (this.draw_errors) {
-         // than doing filer append error bars
-         nodes.filter(function(d) { return (d.exlow > 0) || (d.exhigh > 0); })
-              .append("svg:line")
-              .attr("x1", function(d) { return d.grx0; })
-              .attr("y1", 0)
-              .attr("x2", function(d) { return d.grx2; })
-              .attr("y2", 0)
-              .style("stroke", this.lineatt.color)
-              .style("stroke-width", this.lineatt.width);
-
-         nodes.filter(function(d) { return (d.exlow > 0); })
-              .append("svg:line")
-              .attr("y1", -3)
-              .attr("x1", function(d) { return d.grx0; })
-              .attr("y2", 3)
-              .attr("x2", function(d) { return d.grx0; })
-              .style("stroke", this.lineatt.color)
-              .style("stroke-width", this.lineatt.width);
-
-         nodes.filter(function(d) { return (d.exhigh > 0); })
-              .append("svg:line")
-              .attr("y1", -3)
-              .attr("x1", function(d) { return d.grx2; })
-              .attr("y2", 3)
-              .attr("x2", function(d) { return d.grx2; })
-              .style("stroke", this.lineatt.color)
-              .style( "stroke-width", this.lineatt.width);
-
-         // Add y-error indicators
-
-         nodes.filter(function(d) { return (d.eylow > 0) || (d.eyhigh > 0); })
-              .append("svg:line")
-              .attr("x1", 0)
-              .attr("y1", function(d) { return d.gry0; })
-              .attr("x2", 0)
-              .attr("y2", function(d) { return d.gry2; })
-              .style("stroke", this.lineatt.color)
-              .style("stroke-width", this.lineatt.width);
-
-         nodes.filter(function(d) { return (d.eylow > 0); })
-              .append("svg:line")
-              .attr("x1", -3)
-              .attr("y1", function(d) { return d.gry0; })
-              .attr("x2", 3)
-              .attr("y2", function(d) { return d.gry0; })
-              .style("stroke", this.lineatt.color)
-              .style("stroke-width", this.lineatt.width);
-
-         nodes.filter(function(d) { return (d.eyhigh > 0); })
-              .append("svg:line")
-              .attr("x1", -3)
-              .attr("y1", function(d) { return d.gry2; })
-              .attr("x2", 3)
-              .attr("y2", function(d) { return d.gry2; })
-              .style("stroke", this.lineatt.color)
-              .style("stroke-width", this.lineatt.width);
-      }
-
-      if (this.showMarker) {
-         /* Add markers */
-         var marker = JSROOT.Painter.createAttMarker(this.graph);
-
-         nodes.append("svg:path").call(marker.func);
-      }
+      this.draw_g.append("svg:path")
+          .attr("d", line(excl))
+          .style("stroke", "none")
+          .style("stroke-width", 1)
+          .call(this.fillatt.func)
+          .style('opacity', 0.75);
    }
 
    JSROOT.TGraphPainter.prototype.UpdateObject = function(obj) {
@@ -2350,27 +2896,24 @@
 
    JSROOT.Painter.drawGraph = function(divid, graph, opt) {
 
+      console.log('draw graph with opt ' + opt);
+
       var painter = new JSROOT.TGraphPainter(graph);
+      painter.CreateBins();
+
       painter.SetDivId(divid, -1); // just to get access to existing elements
 
       if (painter.main_painter() == null) {
-         if (graph['fHistogram']==null) {
-            alert("drawing first graph without fHistogram field, not (yet) supported");
-            return null;
-         }
+         if (graph['fHistogram']==null)
+            graph['fHistogram'] = painter.CreateHistogram();
          JSROOT.Painter.drawHistogram1D(divid, graph['fHistogram']);
          painter.ownhisto = true;
       }
 
       painter.SetDivId(divid);
-
       painter.DecodeOptions(opt);
-
-      painter.CreateBins();
-
       painter.DrawBins();
-
-      return painter;
+      return painter.DrawingReady();
    }
 
    // ============================================================
@@ -2390,76 +2933,60 @@
    JSROOT.TPavePainter.prototype.DrawPaveText = function() {
       var pavetext = this.pavetext;
 
-      var w = Number(this.svg_pad(true).attr("width")),
-          h = Number(this.svg_pad(true).attr("height"));
+      var w = this.pad_width(), h = this.pad_height();
+
+      if ((pavetext.fOption.indexOf("NDC")<0) && !pavetext.fInit) {
+         pavetext.fInit = 1;
+         var pad = this.root_pad();
+         if (pad!=null) {
+            if (pad['fLogx']) {
+               if (pavetext.fX1 > 0) pavetext.fX1 = JSROOT.Math.log10(pavetext.fX1);
+               if (pavetext.fX2 > 0) pavetext.fX2 = JSROOT.Math.log10(pavetext.fX2);
+            }
+            if (pad['fLogy']) {
+               if (pavetext.fY1 > 0) pavetext.fY1 = JSROOT.Math.log10(pavetext.fY1);
+               if (pavetext.fY2 > 0) pavetext.fY2 = JSROOT.Math.log10(pavetext.fY2);
+            }
+            pavetext['fX1NDC'] = (pavetext.fX1-pad['fX1'])/(pad['fX2'] - pad['fX1']);
+            pavetext['fY1NDC'] = (pavetext.fY1-pad['fY1'])/(pad['fY2'] - pad['fY1']);
+            pavetext['fX2NDC'] = (pavetext.fX2-pad['fX1'])/(pad['fX2'] - pad['fX1']);
+            pavetext['fY2NDC'] = (pavetext.fY2-pad['fY1'])/(pad['fY2'] - pad['fY1']);
+
+         } else {
+            pavetext['fX1NDC'] = 0.1;
+            pavetext['fX2NDC'] = 0.9;
+            pavetext['fY1NDC'] = 0.1;
+            pavetext['fY2NDC'] = 0.9;
+         }
+      }
 
       var pos_x = Math.round(pavetext['fX1NDC'] * w);
-
       var pos_y = Math.round((1.0 - pavetext['fY1NDC']) * h);
       var width = Math.round(Math.abs(pavetext['fX2NDC'] - pavetext['fX1NDC']) * w);
       var height = Math.round(Math.abs(pavetext['fY2NDC'] - pavetext['fY1NDC']) * h);
+
       pos_y -= height;
       var nlines = pavetext['fLines'].arr.length;
       var tcolor = JSROOT.Painter.root_colors[pavetext['fTextColor']];
       var scolor = JSROOT.Painter.root_colors[pavetext['fShadowColor']];
       var fcolor = this.createAttFill(pavetext);
 
-      // align = 10*HorizontalAlign + VerticalAlign
-      // 1=left adjusted, 2=centered, 3=right adjusted
-      // 1=bottom adjusted, 2=centered, 3=top adjusted
-      // "middle", "start", "end"
-      var align = 'start', halign = Math.round(pavetext['fTextAlign'] / 10);
-      var baseline = 'bottom', valign = pavetext['fTextAlign'] % 10;
-      if (halign == 1) align = 'start';
-      else if (halign == 2) align = 'middle';
-      else if (halign == 3) align = 'end';
-      if (valign == 1)  baseline = 'bottom';
-      else if (valign == 2) baseline = 'middle';
-      else if (valign == 3) baseline = 'top';
-
-      var h_margin = Math.round(pavetext['fMargin'] * width); // horizontal margin
-
-      var font = JSROOT.Painter.getFontDetails(pavetext['fTextFont'], height / (nlines * 1.2));
-
       var lwidth = pavetext['fBorderSize'] ? pavetext['fBorderSize'] : 0;
       var attline = JSROOT.Painter.createAttLine(pavetext, lwidth>0 ? 1 : 0);
 
-      var first_stat = 0, num_cols = 0, maxlw = 0;
+      var first_stat = 0, num_cols = 0;
       var lines = new Array;
 
       // adjust font size
       for (var j = 0; j < nlines; ++j) {
-         var line = JSROOT.Painter.translateLaTeX(pavetext['fLines'].arr[j]['fTitle']);
+         var line = pavetext['fLines'].arr[j]['fTitle'];
          lines.push(line);
-         var lw = h_margin + font.stringWidth(this.svg_pad(true), line) + h_margin;
-         if (lw > maxlw) maxlw = lw;
-         if ((j == 0) || (line.indexOf('|') < 0)) continue;
+         if (!this.IsStats() || (j == 0) || (line.indexOf('|') < 0)) continue;
          if (first_stat === 0) first_stat = j;
          var parts = line.split("|");
          if (parts.length > num_cols)
             num_cols = parts.length;
       }
-
-      if (maxlw > width)
-         font.size = Math.floor(font.size * (width / maxlw));
-      else
-      if ((nlines==1) && (lwidth==0) && (maxlw < width - 40))  {
-         // adjust invisible size of the pave for comfort resizing
-         var diff = width - maxlw;
-         width -= diff;
-         pos_x += diff/2;
-         pavetext['fX1NDC'] = pos_x / w;
-         pavetext['fX2NDC'] = (pos_x + width) / w;
-      }
-
-      var h_margin = Math.round(pavetext['fMargin'] * width); // horizontal margin again
-      var text_pos_x = h_margin / 2; // position of text inside <g> element
-      if (nlines == 1)
-         switch (halign) {
-            case 1: text_pos_x = h_margin; break;
-            case 2: text_pos_x = width / 2; break;
-            case 3: text_pos_x = width - h_margin; break;
-         }
 
       var pthis = this;
 
@@ -2474,7 +3001,7 @@
            .attr("height", height)
            .attr("transform", "translate(" + pos_x + "," + pos_y + ")");
 
-      this.draw_g.append("rect")
+      var rect = this.draw_g.append("rect")
           .attr("x", 0)
           .attr("y", 0)
           .attr("width", width)
@@ -2483,72 +3010,51 @@
           .call(attline.func);
 
       // for characters like 'p' or 'y' several more pixels required to stay in the box when drawn in last line
-      var stepy = (height - 0.2*font.size) / nlines;
+      var stepy = height / nlines, has_head = false;
+      var margin_x = pavetext['fMargin'] * width;
+
+      this.StartTextDrawing(pavetext['fTextFont'], height/(nlines * 1.2));
 
       if (nlines == 1) {
-         this.draw_g.append("text")
-              .attr("text-anchor", align)
-              .attr("x", text_pos_x)
-              .attr("y", ((height / 2) + (font.size / 3)).toFixed(1))
-              .call(font.func)
-              .attr("fill", tcolor)
-              .text(lines[0]);
+         this.DrawText(pavetext['fTextAlign'], 0, 0, width, height, lines[0], tcolor);
       } else {
-
          for (var j = 0; j < nlines; ++j) {
             var jcolor = JSROOT.Painter.root_colors[pavetext['fLines'].arr[j]['fTextColor']];
             if (pavetext['fLines'].arr[j]['fTextColor'] == 0) jcolor = tcolor;
-            var posy = (j+0.5)*stepy + font.size*0.5 - 1;
+            var posy = j*stepy;
 
-            if (pavetext['_typename'] == 'TPaveStats') {
+            if (this.IsStats()) {
                if ((first_stat > 0) && (j >= first_stat)) {
                   var parts = lines[j].split("|");
                   for (var n = 0; n < parts.length; n++)
-                     this.draw_g.append("text")
-                           .attr("text-anchor", "middle")
-                           .attr("x", (width * (n + 0.5) / num_cols).toFixed(1))
-                           .attr("y", posy.toFixed(1))
-                           .call(font.func)
-                           .attr("fill", jcolor)
-                           .text(parts[n]);
-               } else if ((j == 0) || (lines[j].indexOf('=') < 0)) {
-                  this.draw_g.append("text")
-                        .attr("text-anchor", (j == 0) ? "middle" : "start")
-                        .attr("x", ((j == 0) ? width / 2 : pavetext['fMargin'] * width).toFixed(1))
-                        .attr("y", posy.toFixed(1))
-                        .call(font.func)
-                        .attr("fill", jcolor)
-                        .text(lines[j]);
+                     this.DrawText("middle",
+                                    width * n / num_cols, posy,
+                                    width/num_cols, stepy, parts[n], jcolor);
+               } else if (lines[j].indexOf('=') < 0) {
+                  if (j==0) has_head = true;
+                  this.DrawText((j == 0) ? "middle" : "start",
+                                 margin_x, posy, width-2*margin_x, stepy, lines[j], jcolor);
                } else {
-                  var parts = lines[j].split("=");
+                  var parts = lines[j].split("="), sumw = 0;
                   for (var n = 0; n < 2; n++)
-                     this.draw_g.append("text")
-                            .attr("text-anchor", (n == 0) ? "start" : "end")
-                            .attr("x", ((n == 0) ? pavetext['fMargin'] * width  : (1 - pavetext['fMargin']) * width).toFixed(1))
-                            .attr("y", posy.toFixed(1))
-                            .call(font.func)
-                            .attr("fill", jcolor)
-                            .text(parts[n]);
+                     sumw += this.DrawText((n == 0) ? "start" : "end",
+                                      margin_x, posy, width-2*margin_x, stepy, parts[n], jcolor);
+                  this.TextScaleFactor(sumw/(width-2*margin_x), this.draw_g);
                }
             } else {
-               this.draw_g.append("text")
-                      .attr("text-anchor", "start")
-                      .attr("x", text_pos_x.toFixed(1))
-                      .attr("y", posy.toFixed(1))
-                      .call(font.func)
-                      .attr("fill", jcolor)
-                      .text(lines[j]);
+               this.DrawText(pavetext['fTextAlign'], margin_x, posy, width-2*margin_x, stepy, lines[j], jcolor);
             }
          }
       }
 
-      if (pavetext['fBorderSize'] && (pavetext['_typename'] == 'TPaveStats')) {
+      var maxtw = this.FinishTextDrawing();
+
+      if (pavetext['fBorderSize'] && has_head) {
          this.draw_g.append("svg:line")
-                    .attr("class", "pavedraw")
                     .attr("x1", 0)
-                    .attr("y1", stepy)
+                    .attr("y1", stepy.toFixed(1))
                     .attr("x2", width)
-                    .attr("y2", stepy)
+                    .attr("y2", stepy.toFixed(1))
                     .call(attline.func);
       }
 
@@ -2556,16 +3062,16 @@
          for (var nrow = first_stat; nrow < nlines; nrow++)
             this.draw_g.append("svg:line")
                        .attr("x1", 0)
-                       .attr("y1", nrow * stepy)
+                       .attr("y1", (nrow * stepy).toFixed(1))
                        .attr("x2", width)
-                       .attr("y2", nrow * stepy)
+                       .attr("y2", (nrow * stepy).toFixed(1))
                        .call(attline.func);
 
          for (var ncol = 0; ncol < num_cols - 1; ncol++)
             this.draw_g.append("svg:line")
-                        .attr("x1", width / num_cols * (ncol + 1))
-                        .attr("y1", first_stat * stepy)
-                        .attr("x2", width / num_cols * (ncol + 1))
+                        .attr("x1", (width / num_cols * (ncol + 1)).toFixed(1))
+                        .attr("y1", (first_stat * stepy).toFixed(1))
+                        .attr("x2", (width / num_cols * (ncol + 1)).toFixed(1))
                         .attr("y2", height)
                         .call(attline.func);
       }
@@ -2587,47 +3093,89 @@
                     .style("stroke-width", lwidth);
       }
 
-      this.AddDrag("stat", this.draw_g, {
-         move : function(x, y, dx, dy) {
-            pthis.draw_g.attr("transform", "translate(" + x + "," + y + ")");
+      if ((pavetext.fLabel.length>0) && !this.IsStats()) {
+         var lbl_g = this.draw_g.append("svg:g")
+               .attr("x", width*0.25)
+               .attr("y", -h*0.02)
+               .attr("width", width*0.5)
+               .attr("height", h*0.04)
+               .attr("transform", "translate(" + width*0.25 + "," + -h*0.02 + ")");
 
-            pthis.pavetext['fX1NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pthis.pavetext['fX2NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pthis.pavetext['fY1NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-            pthis.pavetext['fY2NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-         },
-         resize : function(width, height) {
-            pthis.pavetext['fX2NDC'] = pthis.pavetext['fX1NDC'] + width  / Number(pthis.svg_pad(true).attr("width"));
-            pthis.pavetext['fY1NDC'] = pthis.pavetext['fY2NDC'] - height / Number(pthis.svg_pad(true).attr("height"));
+         var lbl_rect = lbl_g.append("rect")
+               .attr("x", 0)
+               .attr("y", 0)
+               .attr("width", width*0.5)
+               .attr("height", h*0.04)
+               .call(fcolor.func)
+               .call(attline.func);
 
-            pthis.DrawPaveText();
-         }
-      });
+         this.StartTextDrawing(pavetext['fTextFont'], h*0.04/1.5, lbl_g);
+
+         this.DrawText(22, 0, 0, width*0.5, h*0.04, pavetext.fLabel, tcolor, 1, lbl_g);
+
+         this.FinishTextDrawing(lbl_g);
+      }
+
+      this.AddDrag({ obj:pavetext, redraw:'DrawPaveText' });
    }
 
    JSROOT.TPavePainter.prototype.AddLine = function(txt) {
       this.pavetext.AddText(txt);
-      //this.pavetext['fLines'].arr.push({'fTitle' : txt, "fTextColor" : 1 });
    }
 
    JSROOT.TPavePainter.prototype.IsStats = function() {
       if (!this.pavetext) return false;
-      return this.pavetext['fName'] == "stats";
+      return this.pavetext['_typename'] == 'TPaveStats';
+   }
+
+   JSROOT.TPavePainter.prototype.Format = function(value, fmt) {
+      // method used to convert value to string according specified format
+      // format can be like 5.4g or 4.2e or 6.4f
+      if (!fmt) fmt = "stat";
+
+      if (fmt=="stat") {
+         fmt = this.pavetext.fStatFormat;
+         if (!fmt) fmt = JSROOT.gStyle.StatFormat;
+      } else
+      if (fmt=="fit") {
+         fmt = this.pavetext.fFitFormat;
+         if (!fmt) fmt = JSROOT.gStyle.FitFormat;
+      } else
+      if (fmt=="entries") {
+         if (value < 1e9) return value.toFixed(0);
+         fmt = "14.7g";
+      } else
+      if (fmt=="last") {
+         fmt = this['lastformat'];
+      }
+
+      delete this['lastformat'];
+
+      if (!fmt) fmt = "6.4g";
+
+      var res = JSROOT.FFormat(value, fmt);
+
+      this['lastformat'] = JSROOT.lastFFormat;
+
+      return res;
    }
 
    JSROOT.TPavePainter.prototype.FillStatistic = function() {
       if (!this.IsStats()) return;
+      if (this.pavetext['fName'] != "stats") return;
 
       var dostat = new Number(this.pavetext['fOptStat']);
-      if (!dostat) dostat = new Number(JSROOT.gStyle.OptStat);
+      var dofit = new Number(this.pavetext['fOptFit']);
+      if (!dostat) dostat = JSROOT.gStyle.OptStat;
+      if (!dofit) dofit = JSROOT.gStyle.OptFit;
 
       // we take histogram from first painter
       if ('FillStatistic' in this.main_painter()) {
 
          // make empty at the beginning
-         this.pavetext['fLines'].arr.length = 0;
+         this.pavetext.Clear();
 
-         this.main_painter().FillStatistic(this, dostat);
+         this.main_painter().FillStatistic(this, dostat, dofit);
       }
    }
 
@@ -2639,35 +3187,23 @@
 
    JSROOT.TPavePainter.prototype.Redraw = function() {
 
-      this.RemoveDrawG();
-
       // if pavetext artificially disabled, do not redraw it
-      if (!this.Enabled) {
-         this.RemoveDrag("stat");
-         return;
+      if (this.Enabled) {
+         this.FillStatistic();
+         this.DrawPaveText();
+      } else {
+         this.RemoveDrawG();
       }
-
-      this.FillStatistic();
-
-      this.DrawPaveText();
    }
 
    JSROOT.Painter.drawPaveText = function(divid, pavetext) {
-      if (pavetext['fX1NDC'] < 0.0 || pavetext['fY1NDC'] < 0.0 ||
-          pavetext['fX1NDC'] > 1.0 || pavetext['fY1NDC'] > 1.0)
-         return null;
-
       var painter = new JSROOT.TPavePainter(pavetext);
-
       painter.SetDivId(divid);
 
       // refill statistic in any case
-      // if ('_AutoCreated' in pavetext)
       painter.FillStatistic();
-
       painter.DrawPaveText();
-
-      return painter;
+      return painter.DrawingReady();
    }
 
    // ===========================================================================
@@ -2682,19 +3218,38 @@
 
    JSROOT.TPadPainter.prototype = Object.create(JSROOT.TObjectPainter.prototype);
 
+   JSROOT.TPadPainter.prototype.GetStyleValue = function(select, name) {
+      var value = select.style(name);
+      if (!value) return 0;
+      value = parseFloat(value.replace("px",""));
+      return (value === NaN) ? 0 : value;
+   }
+
    JSROOT.TPadPainter.prototype.CreateCanvasSvg = function(check_resize) {
 
-      var render_to = $("#" + this.divid);
+      var render_to = d3.select("#" + this.divid);
 
-      var w = render_to.width(), h = render_to.height(), factor = null;
+      var rect = render_to.node().getBoundingClientRect();
+
+      var w = Math.round(rect.width - this.GetStyleValue(render_to, 'padding-left') - this.GetStyleValue(render_to, 'padding-right'));
+      var h = Math.round(rect.height - this.GetStyleValue(render_to, 'padding-top') - this.GetStyleValue(render_to, 'padding-bottom'));
+      var factor = null;
 
       var svg = null;
 
       if (check_resize > 0) {
-         svg = this.svg_canvas(true);
+
+         svg = this.svg_canvas();
 
          var oldw = svg.property('last_width');
          var oldh = svg.property('last_height');
+
+         if ((w<=0) && (h<=0)) {
+            svg.attr("visibility", "hidden");
+            return false;
+         } else {
+            svg.attr("visibility", "visible");
+         }
 
          if (check_resize == 1) {
             if ((svg.attr('width') == w) && (svg.attr('height') == h)) return false;
@@ -2706,7 +3261,7 @@
          if (factor!=null) {
             // if canvas was resize when created, resize height also now
             h = Math.round(w * factor);
-            render_to.height(h);
+            render_to.style('height', h+'px');
          }
 
          if ((check_resize==1) && (oldw>0) && (oldh>0) && !svg.property('redraw_by_resize'))
@@ -2719,7 +3274,7 @@
 
       } else {
 
-         if (h < 10) {
+         if ((h < 10) && (w > 0)) {
             // set aspect ratio for the place, where object will be drawn
 
             factor = 0.66;
@@ -2733,7 +3288,7 @@
 
             h = Math.round(w * factor);
 
-            render_to.height(h);
+            render_to.style('height', h+'px');
          }
 
          var fill = null;
@@ -2743,7 +3298,7 @@
          else
             fill = this.createAttFill('white');
 
-         render_to.css("background-color", fill.color);
+         render_to.style("background-color", fill.color);
 
          svg = d3.select("#" + this.divid)
              .append("svg")
@@ -2758,9 +3313,16 @@
           svg.append("svg:g").attr("class","stat_layer");
       }
 
+      if ((w<=0) || (h<=0)) {
+         svg.attr("visibility", "hidden");
+         w = 200; h = 100; // just to complete drawing
+      } else {
+         svg.attr("visibility", "visible");
+      }
+
       svg.attr("width", w).attr("height", h)
          .attr("viewBox", "0 0 " + w + " " + h)
-         .attr("preserveAspectRatio", "none")  // we do not keep relative ratio
+         .attr("preserveAspectRatio", "none")  // we do not preserve relative ratio
          .property('height_factor', factor)
          .property('last_width', w)
          .property('last_height', h)
@@ -2771,8 +3333,8 @@
 
 
    JSROOT.TPadPainter.prototype.CreatePadSvg = function(only_resize) {
-      var width = Number(this.svg_canvas(true).attr("width")),
-          height = Number(this.svg_canvas(true).attr("height"));
+      var width = Number(this.svg_canvas().attr("width")),
+          height = Number(this.svg_canvas().attr("height"));
       var x = Math.round(this.pad['fAbsXlowNDC'] * width);
       var y = Math.round(height - this.pad['fAbsYlowNDC'] * height);
       var w = Math.round(this.pad['fAbsWNDC'] * width);
@@ -2786,10 +3348,10 @@
       var svg_pad = null, svg_rect = null;
 
       if (only_resize) {
-         svg_pad = this.svg_pad(true);
+         svg_pad = this.svg_pad();
          svg_rect = svg_pad.select(".root_pad_border");
       } else {
-         svg_pad = this.svg_canvas(true).append("g")
+         svg_pad = this.svg_canvas().append("g")
              .attr("class", "root_pad")
              .attr("pad", this.pad['fName']) // set extra attribute  to mark pad name
              .property('pad_painter', this) // this is custom property
@@ -2895,7 +3457,7 @@
          painter.DrawPrimitives();
       }
 
-      return painter;
+      return painter.DrawingReady();
    }
 
    JSROOT.Painter.drawPad = function(divid, pad) {
@@ -2908,48 +3470,56 @@
       painter.pad_name = pad['fName'];
 
       // we select current pad, where all drawing is performed
-      var prev_name = painter.svg_canvas()['current_pad'];
-      painter.svg_canvas()['current_pad'] = pad['fName'];
+      var prev_name = painter.svg_canvas().property('current_pad');
+      painter.svg_canvas().property('current_pad', pad['fName']);
 
       painter.DrawPrimitives();
 
       // we restore previous pad name
-      painter.svg_canvas()['current_pad'] = prev_name;
+      painter.svg_canvas().property('current_pad', prev_name);
 
-      return painter;
+      return painter.DrawingReady();
    }
 
    // ===========================================================================
 
-   JSROOT.TColzPalettePainter = function(palette) {
+   JSROOT.TPaletteAxisPainter = function(palette) {
       JSROOT.TObjectPainter.call(this, palette);
       this.palette = palette;
    }
 
-   JSROOT.TColzPalettePainter.prototype = Object.create(JSROOT.TObjectPainter.prototype);
+   JSROOT.TPaletteAxisPainter.prototype = Object.create(JSROOT.TObjectPainter.prototype);
 
-   JSROOT.TColzPalettePainter.prototype.GetObject = function() {
+   JSROOT.TPaletteAxisPainter.prototype.GetObject = function() {
       return this.palette;
    }
 
-   JSROOT.TColzPalettePainter.prototype.DrawPalette = function() {
+   JSROOT.TPaletteAxisPainter.prototype.DrawPalette = function() {
       var palette = this.palette;
       var axis = palette['fAxis'];
 
-      var minbin = this.main_painter().minbin;
-      var maxbin = this.main_painter().maxbin;
       var nbr1 = axis['fNdiv'] % 100;
       if (nbr1<=0) nbr1 = 8;
 
-      var width = Number(this.svg_pad(true).attr("width")),
-          height = Number(this.svg_pad(true).attr("height"));
+      var width = this.pad_width(), height = this.pad_height();
 
       var s_height = Math.round(Math.abs(palette['fY2NDC'] - palette['fY1NDC']) * height);
 
       var axisOffset = axis['fLabelOffset'] * width;
       var tickSize = axis['fTickSize'] * width;
 
-      var z = d3.scale.linear().clamp(true).domain([ minbin, maxbin ]).range( [ s_height, 0 ]).nice();
+      // force creation of contour array if missing
+      if (this.main_painter().fContour==null)
+         this.main_painter().getValueColor(this.main_painter().minbin);
+
+      var contour = this.main_painter().fContour;
+
+      var z = null;
+      if (this.main_painter().options.Logz)
+         z = d3.scale.log();
+      else
+         z = d3.scale.linear();
+      z.domain([contour[0], contour[contour.length-1]]).range([s_height,0]);
 
       var labelfont = JSROOT.Painter.getFontDetails(axis['fLabelFont'], axis['fLabelSize'] * height);
 
@@ -2958,6 +3528,7 @@
 
       var s_width = Math.round(Math.abs(palette['fX2NDC'] - palette['fX1NDC']) * width);
       pos_y -= s_height;
+      if (tickSize > s_width*0.8) tickSize = s_width*0.8;
 
       // Draw palette pad
       this.RecreateDrawG(true, ".text_layer");
@@ -2967,27 +3538,31 @@
              .attr("width", s_width).attr("height", s_height) // dimension required only for drag functions
              .attr("transform", "translate(" + pos_x + ", " + pos_y + ")");
 
-      var paletteColors = this.main_painter().paletteColors;
 
-      // Draw palette
-      var rectHeight = 1. * s_height / paletteColors.length;
+      for (var i=0;i<contour.length-1;i++) {
+         var z0 = z(contour[i]);
+         var z1 = z(contour[i+1]);
+         var col = this.main_painter().getValueColor(contour[i]);
+         var r = this.draw_g
+            .append("svg:rect")
+            .attr("x", 0)
+            .attr("y",  z1.toFixed(1))
+            .attr("width", s_width)
+            .attr("height", (z0-z1).toFixed(1))
+            .attr("fill", col)
+            .property("fill0", col)
+            .attr("stroke", col);
 
-      this.draw_g.selectAll("colorRect")
-                 .data(paletteColors)
-                 .enter()
-                 .append("svg:rect")
-                 .attr("class", "colorRect")
-                 .attr("x", 0)
-                 .attr("y",  function(d, i) { return (s_height - (i + 1) * rectHeight).toFixed(1); })
-                 .attr("width", s_width)
-                 .attr("height", rectHeight.toFixed(1))
-                 .attr("fill", function(d) { return d; })
-                 .attr("stroke", function(d) { return d; });
-                 //.append("svg:title").text(function(d) { return "color" + d; });
-      /*
-       * Build and draw axes
-       */
+         if (JSROOT.gStyle.Tooltip)
+            r.on('mouseover', function() {
+               if (JSROOT.gStyle.Tooltip)
+                  d3.select(this).transition().duration(100).style("fill", 'grey');
+            }).on('mouseout', function() {
+               d3.select(this).transition().duration(100).style("fill", this['fill0']);
+            }).append("svg:title").text(contour[i].toFixed(2) + " - " + contour[i+1].toFixed(2));
+      }
 
+      // Build and draw axes
       var z_axis = d3.svg.axis().scale(z)
                     .orient("right")
                     .tickPadding(axisOffset)
@@ -3003,43 +3578,102 @@
               .call(labelfont.func)
               .attr("fill", JSROOT.Painter.root_colors[axis['fLabelColor']]);
 
-      /*
-       * Add palette axis title
-       */
-      var title = axis['fTitle'];
-      if (title != "" && typeof (axis['fTitleFont']) != 'undefined') {
-         var titlefont = JSROOT.Painter.getFontDetails(axis['fTitleFont'], axis['fTitleSize'] * height);
-         this.draw_g.append("text")
-                .attr("class", "Z axis label")
-                .attr("x", s_width + labelfont.size)
-                .attr("y", s_height)
-                .attr("text-anchor", "end")
-                .call(titlefont.func);
+      /** Add palette axis title */
+      if ((axis['fTitle'] != "") && (typeof axis['fTextFont'] != 'undefined')) {
+         // offest in width of colz drawings
+         var xoffset = axis['fTitleOffset'] * s_width;
+         if ('getBoundingClientRect' in this.draw_g.node()) {
+            var rect1 = this.draw_g.node().getBoundingClientRect();
+            // offset in portion of real text width produced by axis
+            xoffset = axis['fTitleOffset'] * (rect1.width-s_width);
+         }
+         // add font size
+         xoffset += s_width + axis['fTitleSize'] * height * 1.3;
+         if (pos_x + xoffset > width-3) xoffset = width - 3 - pos_x;
+         var tcolor = JSROOT.Painter.root_colors[axis['fTextColor']];
+         this.StartTextDrawing(axis['fTextFont'], axis['fTitleSize'] * height);
+         this.DrawText(33, 0, xoffset, 0, -270, axis['fTitle'], tcolor);
+         this.FinishTextDrawing();
       }
 
-      var pthis = this;
+      this.AddDrag({ obj: palette, redraw: 'DrawPalette' });
 
-      this.AddDrag("colz", this.draw_g, {
-         move : function(x, y, dx, dy) {
+      if (!JSROOT.gStyle.Zooming) return;
 
-            pthis.draw_g.attr("transform", "translate(" + x + "," + y + ")");
+      var pthis = this, evnt = null, doing_zoom = false, sel1 = 0, sel2 = 0, zoom_rect = null;
 
-            pthis.palette['fX1NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pthis.palette['fX2NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pthis.palette['fY1NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-            pthis.palette['fY2NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-         },
-         resize : function(width, height) {
-            pthis.palette['fX2NDC'] = pthis.palette['fX1NDC'] + width / Number(pthis.svg_pad(true).attr("width"));
-            pthis.palette['fY1NDC'] = pthis.palette['fY2NDC'] - height / Number(pthis.svg_pad(true).attr("height"));
+      function moveRectSel() {
 
-            pthis.RemoveDrawG();
-            pthis.DrawPalette();
-         }
-      });
+         if (!doing_zoom) return;
+
+         d3.event.preventDefault();
+         var m = d3.mouse(evnt);
+
+         if (m[1] < sel1) sel1 = m[1]; else sel2 = m[1];
+
+         zoom_rect.attr("y", sel1)
+                  .attr("height", Math.abs(sel2-sel1));
+      }
+
+      function endRectSel() {
+         if (!doing_zoom) return;
+
+         d3.event.preventDefault();
+         // d3.select(window).on("touchmove.zoomRect",
+         // null).on("touchend.zoomRect", null);
+         d3.select(window).on("mousemove.colzoomRect", null)
+                          .on("mouseup.colzoomRect", null);
+         // d3.select("body").classed("noselect", false);
+         // d3.select("body").style("-webkit-user-select", "auto");
+         zoom_rect.remove();
+         zoom_rect = null;
+         doing_zoom = false;
+
+         var zmin = Math.min(z.invert(sel1), z.invert(sel2));
+         var zmax = Math.max(z.invert(sel1), z.invert(sel2));
+
+         pthis.main_painter().Zoom(0, 0, 0, 0, zmin, zmax);
+      }
+
+      function startRectSel() {
+
+         // ignore when touch selection is actiavated
+         if (doing_zoom) return;
+         doing_zoom = true;
+
+         d3.event.preventDefault();
+
+         evnt = this;
+         var origin = d3.mouse(evnt);
+
+         sel1 = sel2 = origin[1];
+
+         zoom_rect = pthis.draw_g
+                .append("svg:rect")
+                .attr("class", "zoom")
+                .attr("id", "colzoomRect")
+                .attr("x", "0")
+                .attr("width", s_width)
+                .attr("y", sel1)
+                .attr("height", 5);
+
+         d3.select(window).on("mousemove.colzoomRect", moveRectSel)
+                          .on("mouseup.colzoomRect", endRectSel, true);
+
+         d3.event.stopPropagation();
+      }
+
+      this.draw_g.append("svg:rect")
+                 .attr("x", s_width)
+                 .attr("y", 0)
+                 .attr("width", 20)
+                 .attr("height", s_height)
+                 .style("cursor", "crosshair")
+                 .style("opacity", "0")
+                 .on("mousedown", startRectSel);
    }
 
-   JSROOT.TColzPalettePainter.prototype.Redraw = function() {
+   JSROOT.TPaletteAxisPainter.prototype.Redraw = function() {
 
       var enabled = true;
 
@@ -3051,12 +3685,11 @@
       } else {
          // if palette artificially disabled, do not redraw it
          this.RemoveDrawG();
-         this.RemoveDrag("colz");
       }
    }
 
    JSROOT.Painter.drawPaletteAxis = function(divid, palette) {
-      var painter = new JSROOT.TColzPalettePainter(palette);
+      var painter = new JSROOT.TPaletteAxisPainter(palette);
 
       painter.SetDivId(divid);
 
@@ -3117,7 +3750,7 @@
       var chopt = opt.toUpperCase();
       chopt = JSROOT.Painter.clearCuts(chopt);
       if (hdim > 1) option.Scat = 1;
-      if (this.IsTProfile()) option.Error = 2;
+      if ((hdim==1) && (this.histo.fSumw2.length>0)) option.Error = 2;
       if ('fFunctions' in this.histo) option.Func = 1;
 
       if (chopt.indexOf('AUTOCOL') != -1) {
@@ -3142,12 +3775,16 @@
          option.Logy = 1;
          chopt = chopt.replace('LOGY', '');
       }
+      if (chopt.indexOf('LOGZ') != -1) {
+         option.Logz = 1;
+         chopt = chopt.replace('LOGZ', '');
+      }
 
       chopt = chopt.trim();
+      while ((chopt.length>0) && (chopt[0]==',' || chopt[0]==';')) chopt = chopt.substr(1);
+
       var nch = chopt.length;
-
       if (!nch) option.Hist = 1;
-
 
       var l = chopt.indexOf('SPEC');
       if (l != -1) {
@@ -3631,11 +4268,12 @@
 
       this['zoom_xmin'] = 0;
       this['zoom_xmax'] = 0;
-      this['zoom_xpad'] = true; // indicate that zooming specified from pad
 
       this['zoom_ymin'] = 0;
       this['zoom_ymax'] = 0;
-      this['zoom_ypad'] = true; // indicate that zooming specified from pad
+
+      this['zoom_zmin'] = 0;
+      this['zoom_zmax'] = 0;
 
       if ((pad!=null) && ('fUxmin' in pad) && !this.create_canvas) {
          this['zoom_xmin'] = pad.fUxmin;
@@ -3672,6 +4310,8 @@
       this.histo['fArray'] = obj['fArray'];
       this.histo['fNcells'] = obj['fNcells'];
       this.histo['fTitle'] = obj['fTitle'];
+      this.histo['fMinimum'] = obj['fMinimum'];
+      this.histo['fMaximum'] = obj['fMaximum'];
       this.histo['fXaxis']['fNbins'] = obj['fXaxis']['fNbins'];
       this.histo['fXaxis']['fXmin'] = obj['fXaxis']['fXmin'];
       this.histo['fXaxis']['fXmax'] = obj['fXaxis']['fXmax'];
@@ -3704,8 +4344,7 @@
          return;
       }
 
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
+      var w = this.frame_width(), h = this.frame_height();
 
       if (this.histo['fXaxis']['fTimeDisplay']) {
          this.x_time = true;
@@ -3761,10 +4400,10 @@
       this['scale_ymin'] = this.ymin;
       this['scale_ymax'] = this.ymax;
 
-      if (this.zoom_ypad) {
-         if (this.histo.fMinimum != -1111) this.zoom_ymin = this.histo.fMinimum;
-         if (this.histo.fMaximum != -1111) this.zoom_ymax = this.histo.fMaximum;
-         this['zoom_ypad'] = false;
+      if ((this.Dimension()==1) && (this.histo.fMinimum != -1111) && (this.histo.fMaximum != -1111)) {
+         // only for 1D histogram use min.max for range selection
+         this['scale_ymin'] = this.histo.fMinimum;
+         this['scale_ymax'] = this.histo.fMaximum;
       }
 
       if (this.zoom_ymin != this.zoom_ymax) {
@@ -3824,7 +4463,7 @@
       // grid can only be drawn by first painter
       if (!this.is_main_painter()) return;
 
-      var layer = this.svg_frame(true).select(".grid_layer");
+      var layer = this.svg_frame().select(".grid_layer");
 
       layer.selectAll(".xgrid").remove();
       layer.selectAll(".ygrid").remove();
@@ -3833,7 +4472,7 @@
       // add a grid on x axis, if the option is set
       if (this.options.Gridx) {
 
-         var h = Number(this.svg_frame(true).attr("height"));
+         var h = this.frame_height();
 
          var xticks = this.x.ticks(this.x_nticks);
 
@@ -3852,7 +4491,7 @@
 
       // add a grid on y axis, if the option is set
       if (this.options.Gridy) {
-         var w = Number(this.svg_frame(true).attr("width"));
+         var w = this.frame_width();
 
          var yticks = this.y.ticks(this.y_nticks);
 
@@ -3906,18 +4545,17 @@
 
       if (!this.is_main_painter()) return;
 
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
+      var w = this.frame_width(), h = this.frame_height();
 
-      var xax_g = this.svg_frame(true).selectAll(".xaxis_container");
+      var xax_g = this.svg_frame().selectAll(".xaxis_container");
       if (xax_g.empty())
-         xax_g = this.svg_frame(true).select(".axis_layer").append("svg:g").attr("class","xaxis_container");
+         xax_g = this.svg_frame().select(".axis_layer").append("svg:g").attr("class","xaxis_container");
 
       xax_g.selectAll("*").remove();
       xax_g.attr("transform", "translate(0," + h + ")");
 
-      var yax_g = this.svg_frame(true).selectAll(".yaxis_container");
-      if (yax_g.empty()) yax_g = this.svg_frame(true).select(".axis_layer").append("svg:g").attr("class", "yaxis_container");
+      var yax_g = this.svg_frame().selectAll(".yaxis_container");
+      if (yax_g.empty()) yax_g = this.svg_frame().select(".axis_layer").append("svg:g").attr("class", "yaxis_container");
       yax_g.selectAll("*").remove();
 
       var ndivx = this.histo['fXaxis']['fNdivisions'];
@@ -3931,39 +4569,35 @@
       var n3ay = ndivy / 10000;
 
       /* X-axis label */
-      var label = JSROOT.Painter.translateLaTeX(this.histo['fXaxis']['fTitle']);
-      var xAxisLabelOffset = 3 + (this.histo['fXaxis']['fLabelOffset'] * h);
-
       var xlabelfont = JSROOT.Painter.getFontDetails(this.histo['fXaxis']['fLabelFont'], this.histo['fXaxis']['fLabelSize'] * h);
 
-      var ylabelfont = JSROOT.Painter.getFontDetails(this.histo['fYaxis']['fLabelFont'], this.histo['fYaxis']['fLabelSize'] * h);
+      var xAxisLabelOffset = 3 + (this.histo['fXaxis']['fLabelOffset'] * h);
 
-      if (label.length > 0) {
-         var xtitlefont = JSROOT.Painter.getFontDetails(this.histo['fXaxis']['fTitleFont'], this.histo['fXaxis']['fTitleSize'] * h);
-         xax_g.append("text")
-               .attr("class", "x_axis_label")
-               .attr("x", w)
-               .attr("y", xlabelfont.size + xAxisLabelOffset * this.histo['fXaxis']['fTitleOffset'] + xtitlefont.size)
-               .attr("text-anchor", "end")
-               .call(xtitlefont.func)
-               .text(label);
+      if (this.histo['fXaxis']['fTitle'].length > 0) {
+          this.StartTextDrawing(this.histo['fXaxis']['fTitleFont'], this.histo['fXaxis']['fTitleSize'] * h, xax_g);
+
+          var res = this.DrawText('end', w, xAxisLabelOffset + xlabelfont.size * (1.+this.histo['fXaxis']['fTitleOffset']),
+                                    0, 0, this.histo['fXaxis']['fTitle'], null, 1, xax_g);
+
+          if (res<=0) shrink_forbidden = true;
+
+          this.FinishTextDrawing(xax_g);
       }
 
       /* Y-axis label */
-      label = JSROOT.Painter.translateLaTeX(this.histo['fYaxis']['fTitle']);
-
       var yAxisLabelOffset = 3 + (this.histo['fYaxis']['fLabelOffset'] * w);
 
-      if (label.length > 0) {
-         var ytitlefont = JSROOT.Painter.getFontDetails(this.histo['fYaxis']['fTitleFont'], this.histo['fYaxis']['fTitleSize'] * h);
-         yax_g.append("text")
-                .attr("class", "y_axis_label")
-                .attr("x", 0)
-                .attr("y", - ylabelfont.size - ytitlefont.size - yAxisLabelOffset * this.histo['fYaxis']['fTitleOffset'])
-                .call(ytitlefont.func)
-                .attr("text-anchor", "end")
-                .text(label)
-                .attr("transform", "rotate(270, 0, 0)");
+      var ylabelfont = JSROOT.Painter.getFontDetails(this.histo['fYaxis']['fLabelFont'], this.histo['fYaxis']['fLabelSize'] * h);
+
+      if (this.histo['fYaxis']['fTitle'].length > 0) {
+         this.StartTextDrawing(this.histo['fYaxis']['fTitleFont'], this.histo['fYaxis']['fTitleSize'] * h, yax_g);
+
+         var res = this.DrawText("end", 0, - yAxisLabelOffset - (1 + this.histo['fYaxis']['fTitleOffset']) * ylabelfont.size - yax_g.property('text_font').size,
+                                   0, -270, this.histo['fYaxis']['fTitle'], null, 1, yax_g);
+
+         if (res<=0) shrink_forbidden = true;
+
+         this.FinishTextDrawing(yax_g);
       }
 
       var xAxisColor = this.histo['fXaxis']['fAxisColor'];
@@ -3973,9 +4607,7 @@
 
       var pthis = this;
 
-      /*
-       * Define the scales, according to the information from the pad
-       */
+      /* Define the scales, according to the information from the pad */
 
       delete this['formatx'];
 
@@ -4091,7 +4723,6 @@
          y_axis.tickFormat(function(d) { return pthis.formaty(d); });
 
 
-
       xax_g.append("svg:g").attr("class", "xaxis").call(x_axis);
 
       // this is additional ticks, required in d3.v3
@@ -4117,34 +4748,33 @@
          yax_g.append("svg:g").attr("class", "yaxis").call(y_axis_sub);
       }
 
-      xax_g.selectAll("text").call(xlabelfont.func);
-
-      yax_g.selectAll("text").call(ylabelfont.func);
+      xax_g.call(xlabelfont.func);
+      yax_g.call(ylabelfont.func);
 
       // we will use such rect for zoom selection
       if (JSROOT.gStyle.Zooming) {
          xax_g.append("svg:rect")
-            .attr("class", "xaxis_zoom")
             .attr("x", 0)
             .attr("y", 0)
             .attr("width", w)
             .attr("height", xlabelfont.size + 3)
-            .style('opacity', "0");
+            .style('opacity', "0")
+            .style("cursor", "crosshair");
 
          // we will use such rect for zoom selection
          yax_g.append("svg:rect")
-            .attr("class", "yaxis_zoom")
             .attr("x",-2 * ylabelfont.size - 3)
             .attr("y", 0)
             .attr("width", 2 * ylabelfont.size + 3)
             .attr("height", h)
-            .style('opacity', "0");
+            .style('opacity', "0")
+            .style("cursor", "crosshair");
       }
 
       if ((shrink_forbidden==null) && typeof yax_g.node()['getBoundingClientRect'] == 'function') {
 
          var rect1 = yax_g.node().getBoundingClientRect();
-         var rect2 = this.svg_pad().getBoundingClientRect();
+         var rect2 = this.svg_pad().node().getBoundingClientRect();
          var position = rect1.left - rect2.left;
 
          var shrink = 0.;
@@ -4159,8 +4789,8 @@
          }
 
          if (shrink != 0) {
-            this.svg_frame()['frame_painter'].Shrink(shrink, 0);
-            this.svg_frame()['frame_painter'].Redraw();
+            this.svg_frame().property('frame_painter').Shrink(shrink, 0);
+            this.svg_frame().property('frame_painter').Redraw();
             this.CreateXY();
             this.DrawAxes(true);
          }
@@ -4178,7 +4808,7 @@
 
          var pavetext = JSROOT.Create("TPaveText");
 
-         jQuery.extend(pavetext, { fName: "title",
+         JSROOT.extend(pavetext, { fName: "title",
                                    fX1NDC: 0.2809483, fY1NDC: 0.9339831,
                                    fX2NDC: 0.7190517, fY2NDC: 0.995});
          pavetext.AddText(this.histo['fTitle']);
@@ -4212,6 +4842,14 @@
       // when stat box is drawed, it always can be draw individualy while it
       // should be last for colz RedrawPad is used
       statpainter.Redraw();
+   }
+
+   JSROOT.THistPainter.prototype.IsAxisZoomed = function(axis) {
+      var obj = this.main_painter();
+      if (obj == null) obj = this;
+      if (axis == "x") return obj.zoom_xmin != obj.zoom_xmax;
+      if (axis == "y") return obj.zoom_ymin != obj.zoom_ymax;
+      return false;
    }
 
    JSROOT.THistPainter.prototype.GetSelectIndex = function(axis, size, add) {
@@ -4276,13 +4914,14 @@
       if (this.FindStat() != null) return null;
 
       var stats = JSROOT.Create('TPaveStats');
-      jQuery.extend(stats, { _AutoCreated: true,
+      JSROOT.extend(stats, { _AutoCreated: true,
                              fName : 'stats',
                              fOptStat: JSROOT.gStyle.OptStat,
+                             fOptFit: JSROOT.gStyle.OptFit,
                              fBorderSize : 1} );
-      jQuery.extend(stats, JSROOT.gStyle.StatNDC);
-      jQuery.extend(stats, JSROOT.gStyle.StatText);
-      jQuery.extend(stats, JSROOT.gStyle.StatFill);
+      JSROOT.extend(stats, JSROOT.gStyle.StatNDC);
+      JSROOT.extend(stats, JSROOT.gStyle.StatText);
+      JSROOT.extend(stats, JSROOT.gStyle.StatFill);
 
       if (this.histo['_typename'] && (this.histo['_typename'].match(/^TProfile/) || this.histo['_typename'].match(/^TH2/)))
          stats['fY1NDC'] = 0.67;
@@ -4297,6 +4936,16 @@
       return stats;
    }
 
+   JSROOT.THistPainter.prototype.FindF1 = function() {
+      // search for TF1 object in list of functions, it is fitted function
+      if (!('fFunctions' in this.histo))  return null;
+      for ( var i in this.histo.fFunctions.arr) {
+         var func = this.histo.fFunctions.arr[i];
+         if (func['_typename'] == 'TF1') return func;
+      }
+      return null;
+   }
+
    JSROOT.THistPainter.prototype.DrawFunctions = function() {
 
       // draw statistics box & other TPaveTexts, which are belongs to histogram
@@ -4307,8 +4956,9 @@
       // if (this.options.Func == 0) return; // in some cases on need to disable
       // functions drawing
 
-      // do not draw functions when 'same' option was used of kNoStats bit is set
-      if (this.histo.TestBit(JSROOT.TH1StatusBits.kNoStats) || (this.options.Same==1) || (this.options.NoStat==1)) return;
+      // do not draw functions when 'same' option was used
+      if (this.options.Same) return;
+      var nostat = this.histo.TestBit(JSROOT.TH1StatusBits.kNoStats) || (this.options.NoStat==1);
 
       var lastpainter = this;
 
@@ -4328,6 +4978,7 @@
       for ( var i in this.histo.fFunctions.arr) {
 
          var func = this.histo.fFunctions.arr[i];
+         var opt = this.histo.fFunctions.opt[i];
 
          var funcpainter = this.FindPainterFor(func);
 
@@ -4336,18 +4987,13 @@
          if (funcpainter != null) continue;
 
          if (func['_typename'] == 'TPaveText' || func['_typename'] == 'TPaveStats') {
-            funcpainter = JSROOT.Painter.drawPaveText(this.divid, func);
-         } else
-
-         if (func['_typename'] == 'TF1') {
-            var is_pad = this.root_pad() != null;
-            if ((!is_pad && !func.TestBit(kNotDraw))
-                  || (is_pad && func.TestBit(EStatusBits.kObjInCanvas)))
-               funcpainter = JSROOT.Painter.drawFunction(this.divid, func);
-         } else
-
-         if (func['_typename'] == 'TPaletteAxis') {
-            funcpainter = JSROOT.Painter.drawPaletteAxis(this.divid, func);
+            if (!nostat)
+               funcpainter = JSROOT.Painter.drawPaveText(this.divid, func, opt);
+         } else if (func['_typename'] == 'TF1') {
+            if (!func.TestBit(kNotDraw))
+               funcpainter = JSROOT.Painter.drawFunction(this.divid, func, opt);
+         } else {
+            funcpainter = JSROOT.draw(this.divid, func, opt);
          }
       }
    }
@@ -4360,7 +5006,7 @@
       if (this.create_canvas) this.DrawTitle();
    }
 
-   JSROOT.THistPainter.prototype.Unzoom = function(dox, doy) {
+   JSROOT.THistPainter.prototype.Unzoom = function(dox, doy, doz) {
       var obj = this.main_painter();
       if (!obj) obj = this;
 
@@ -4368,19 +5014,20 @@
 
       if (dox) {
          if (obj['zoom_xmin'] != obj['zoom_xmax']) changed = true;
-         obj['zoom_xmin'] = 0;
-         obj['zoom_xmax'] = 0;
+         obj['zoom_xmin'] = obj['zoom_xmax'] = 0;
       }
       if (doy) {
          if (obj['zoom_ymin'] != obj['zoom_ymax']) changed = true;
-         obj['zoom_ymin'] = 0;
-         obj['zoom_ymax'] = 0;
+         obj['zoom_ymin'] = obj['zoom_ymax'] = 0;
       }
-
+      if (doz) {
+         if (obj['zoom_zmin'] != obj['zoom_zmax']) changed = true;
+         obj['zoom_zmin'] = obj['zoom_zmax'] = 0;
+      }
       if (changed) this.RedrawPad();
    }
 
-   JSROOT.THistPainter.prototype.Zoom = function(xmin, xmax, ymin, ymax) {
+   JSROOT.THistPainter.prototype.Zoom = function(xmin, xmax, ymin, ymax, zmin, zmax) {
       var obj = this.main_painter();
       if (!obj) obj = this;
 
@@ -4396,6 +5043,11 @@
          obj['zoom_ymax'] = ymax;
          isany = true;
       }
+      if ((zmin!=zmax) && (zmin!=null) && (zmax!=null)) {
+         obj['zoom_zmin'] = zmin;
+         obj['zoom_zmax'] = zmax;
+         isany = true;
+      }
 
       if (isany) this.RedrawPad();
    }
@@ -4407,8 +5059,7 @@
 
       // if (!this.draw_content) return;
 
-      var width = Number(this.svg_frame(true).attr("width")),
-          height = Number(this.svg_frame(true).attr("height"));
+      var width = this.frame_width(), height = this.frame_height();
       var e, origin, curr = null, rect = null;
       var lasttouch = new Date(0);
 
@@ -4421,8 +5072,7 @@
       var pthis = this;
 
       function closeAllExtras() {
-         var x = document.getElementById('root_ctx_menu');
-         if (x) x.parentNode.removeChild(x);
+         JSROOT.Painter.closeMenu();
          if (rect != null) { rect.remove(); rect = null; }
          zoom_kind = 0;
          if (disable_tooltip) {
@@ -4438,22 +5088,22 @@
          // ignore context menu when touches zooming is ongoing
          if (zoom_kind > 100) return;
 
+         // one need to copy event, while after call back event may be changed
+         var evnt = d3.event;
+
          // suppress any running zomming
          closeAllExtras();
 
-         var menu = JSROOT.createMenu();
+         JSROOT.Painter.createMenu(function(menu) {
+            menu['painter'] = pthis;
+            menu.add("header:"+ pthis.histo['fName']);
+            pthis.FillContextMenu(menu);
+            menu.show(evnt);
+         });
 
-         menu['painter'] = pthis;
-
-         menu.add("header:"+ pthis.histo['fName']);
-
-         pthis.FillContextMenu(menu);
-
-         menu.show(d3.event)
       }
 
       function startTouchSel() {
-
          // in case when zooming was started, block any other kind of events
          if (zoom_kind != 0) {
             d3.event.preventDefault();
@@ -4462,8 +5112,8 @@
          }
 
          // update frame dimensions while frame could be resized
-         width = Number(pthis.svg_frame(true).attr("width"));
-         height = Number(pthis.svg_frame(true).attr("height"));
+         width = Number(pthis.svg_frame().attr("width"));
+         height = Number(pthis.svg_frame().attr("height"));
 
          e = this;
          // var t = d3.event.changedTouches;
@@ -4483,7 +5133,7 @@
                d3.event.stopPropagation();
 
                closeAllExtras();
-               pthis.Unzoom(true, true);
+               pthis.Unzoom(true, true, true);
             } else {
                lasttouch = now;
                curr = arr[0];
@@ -4522,7 +5172,7 @@
          // d3.select("body").classed("noselect", true);
          // d3.select("body").style("-webkit-user-select", "none");
 
-         rect = pthis.svg_frame(true).append("rect")
+         rect = pthis.svg_frame().append("rect")
                .attr("class", "zoom")
                .attr("id", "zoomRect")
                .attr("x", curr[0])
@@ -4530,7 +5180,7 @@
                .attr("width", origin[0] - curr[0])
                .attr("height", origin[1] - curr[1]);
 
-         // pthis.svg_frame(true).on("dblclick", unZoom);
+         // pthis.svg_frame().on("dblclick", unZoom);
 
          d3.select(window).on("touchmove.zoomRect", moveTouchSel)
                           .on("touchcancel.zoomRect", endTouchSel)
@@ -4617,16 +5267,7 @@
          d3.event.stopPropagation();
       }
 
-      function detectLeftButton(event) {
-         if ('buttons' in event) return event.buttons === 1;
-         else if ('which' in event) return event.which === 1;
-         else return event.button === 1;
-       }
-
       function startRectSel() {
-
-         // use only left button
-         // if (!detectLeftButton(d3.event)) return;
 
          // ignore when touch selection is actiavated
          if (zoom_kind > 100) return;
@@ -4634,8 +5275,8 @@
          d3.event.preventDefault();
 
          // update frame dimensions while frame could be resized
-         width = Number(pthis.svg_frame(true).attr("width"));
-         height = Number(pthis.svg_frame(true).attr("height"));
+         width = Number(pthis.svg_frame().attr("width"));
+         height = Number(pthis.svg_frame().attr("height"));
 
          closeAllExtras();
 
@@ -4667,12 +5308,12 @@
          // d3.select("body").classed("noselect", true);
          // d3.select("body").style("-webkit-user-select", "none");
 
-         rect = pthis.svg_frame(true)
+         rect = pthis.svg_frame()
                 .append("rect")
                 .attr("class", "zoom")
                 .attr("id", "zoomRect");
 
-         pthis.svg_frame(true).on("dblclick", unZoom);
+         pthis.svg_frame().on("dblclick", unZoom);
 
          d3.select(window).on("mousemove.zoomRect", moveRectSel)
                           .on("mouseup.zoomRect", endRectSel, true);
@@ -4684,10 +5325,10 @@
          d3.event.preventDefault();
          var m = d3.mouse(e);
          closeAllExtras();
-         if (m[0] < 0) pthis.Unzoom(false, true); else
-         if (m[1] > height) pthis.Unzoom(true, false); else {
-            pthis.Unzoom(true, true);
-            pthis.svg_frame(true).on("dblclick", null);
+         if (m[0] < 0) pthis.Unzoom(false, true, false); else
+         if (m[1] > height) pthis.Unzoom(true, false, false); else {
+            pthis.Unzoom(true, true, true);
+            pthis.svg_frame().on("dblclick", null);
          }
       }
 
@@ -4769,16 +5410,21 @@
          if (isany) pthis.Zoom(xmin, xmax, ymin, ymax);
       }
 
-      this.svg_frame(true).on("mousedown", startRectSel);
-      this.svg_frame(true).on("touchstart", startTouchSel);
-      this.svg_frame(true).on("contextmenu", showContextMenu);
-
+      this.svg_frame().on("mousedown", startRectSel);
+      this.svg_frame().on("touchstart", startTouchSel);
+      if (JSROOT.gStyle.ContextMenu)
+         this.svg_frame().on("contextmenu", showContextMenu);
    }
 
    JSROOT.THistPainter.prototype.FillContextMenu = function(menu) {
-      menu.add("Unzoom X", function() { menu['painter'].Unzoom(true, false); });
-      menu.add("Unzoom Y", function() { menu['painter'].Unzoom(false, true); });
-      menu.add("Unzoom", function() { menu['painter'].Unzoom(true, true); });
+
+      if (this.zoom_xmin!=this.zoom_xmax)
+         menu.add("Unzoom X", function() { menu['painter'].Unzoom(true, false, false); });
+      if (this.zoom_ymin!=this.zoom_ymax)
+         menu.add("Unzoom Y", function() { menu['painter'].Unzoom(false, true, false); });
+      if (this.zoom_zmin!=this.zoom_zmax)
+         menu.add("Unzoom Z", function() { menu['painter'].Unzoom(false, false, true); });
+      menu.add("Unzoom", function() { menu['painter'].Unzoom(true, true, true); });
 
       menu.add(JSROOT.gStyle.Tooltip ? "Disable tooltip" : "Enable tooltip", function() {
          JSROOT.gStyle.Tooltip = !JSROOT.gStyle.Tooltip;
@@ -4794,11 +5440,19 @@
             menu['painter'].RedrawPad();
          });
 
-         var item = this.options.Logy > 0 ? "Linear Y" : "Log Y";
+         item = this.options.Logy > 0 ? "Linear Y" : "Log Y";
          menu.add(item, function() {
             menu['painter'].options.Logy = 1 - menu['painter'].options.Logy;
             menu['painter'].RedrawPad();
          });
+
+         if (this.Dimension() == 2) {
+            item = this.options.Logz > 0 ? "Linear Z" : "Log Z";
+            menu.add(item, function() {
+               menu['painter'].options.Logz = 1 - menu['painter'].options.Logz;
+               menu['painter'].RedrawPad();
+            });
+         }
       }
       if (this.draw_content)
          menu.add("Toggle stat", function() { menu['painter'].ToggleStat(); });
@@ -4832,11 +5486,12 @@
       for (var i = 0; i < this.nbinsx; ++i) {
          var value = this.histo.getBinContent(i + 1);
          hsum += profile ? this.histo.fBinEntries[i + 1] : value;
+         if (value > 0)
+            if ((hmin_nz == 0) || (value<hmin_nz)) hmin_nz = value;
+         if (this.options.Error > 0) value += this.histo.getBinError(i + 1);
          if (i == 0) hmin = hmax = value;
          if (value < hmin) hmin = value; else
          if (value > hmax) hmax = value;
-         if (value > 0)
-            if ((hmin_nz == 0) || (value<hmin_nz)) hmin_nz = value;
       }
 
       // account overflow/underflow bins
@@ -4921,7 +5576,15 @@
          stat_sumwx2 += w * xx * xx;
       }
 
+      // when no range selection done, use original statistic from histogram
+      if (!this.IsAxisZoomed("x") && (this.histo.fTsumw>0)) {
+         stat_sumw = this.histo.fTsumw;
+         stat_sumwx = this.histo.fTsumwx;
+         stat_sumwx2 = this.histo.fTsumwx2;
+      }
+
       var res = { meanx: 0, meany: 0, rmsx: 0, rmsy: 0, integral: stat_sumw, entries: this.stat_entries, xmax:0, wmax:0 };
+
 
       if (stat_sumw > 0) {
          res.meanx = stat_sumwx / stat_sumw;
@@ -4938,7 +5601,7 @@
       return res;
    }
 
-   JSROOT.TH1Painter.prototype.FillStatistic = function(stat, dostat) {
+   JSROOT.TH1Painter.prototype.FillStatistic = function(stat, dostat, dofit) {
       if (!this.histo) return false;
 
       var data = this.CountStat();
@@ -4959,54 +5622,87 @@
       if (this.IsTProfile()) {
 
          if (print_entries > 0)
-            stat.AddLine("Entries = " + JSROOT.gStyle.StatEntriesFormat(data.entries));
+            stat.AddLine("Entries = " + stat.Format(data.entries,"entries"));
 
          if (print_mean > 0) {
-            stat.AddLine("Mean = " + JSROOT.gStyle.StatFormat(data.meanx));
-            stat.AddLine("Mean y = " + JSROOT.gStyle.StatFormat(data.meany));
+            stat.AddLine("Mean = " + stat.Format(data.meanx));
+            stat.AddLine("Mean y = " + stat.Format(data.meany));
          }
 
          if (print_rms > 0) {
-            stat.AddLine("RMS = " + JSROOT.gStyle.StatFormat(data.rmsx));
-            stat.AddLine("RMS y = " + JSROOT.gStyle.StatFormat(data.rmsy));
+            stat.AddLine("RMS = " + stat.Format(data.rmsx));
+            stat.AddLine("RMS y = " + stat.Format(data.rmsy));
          }
 
       } else {
 
          if (print_entries > 0)
-            stat.AddLine("Entries = " + JSROOT.gStyle.StatEntriesFormat(data.entries));
+            stat.AddLine("Entries = " + stat.Format(data.entries,"entries"));
 
          if (print_mean > 0) {
-            stat.AddLine("Mean = " + JSROOT.gStyle.StatFormat(data.meanx));
+            stat.AddLine("Mean = " + stat.Format(data.meanx));
          }
 
          if (print_rms > 0) {
-            stat.AddLine("RMS = " + JSROOT.gStyle.StatFormat(data.rmsx));
+            stat.AddLine("RMS = " + stat.Format(data.rmsx));
          }
 
          if (print_under > 0) {
             var res = 0;
             if (this.histo['fArray'].length > 0)
                res = this.histo['fArray'][0];
-            stat.AddLine("Underflow = " + JSROOT.gStyle.StatFormat(res));
+            stat.AddLine("Underflow = " + stat.Format(res));
          }
 
          if (print_over > 0) {
             var res = 0;
             if (this.histo['fArray'].length > 0)
                res = this.histo['fArray'][this.histo['fArray'].length - 1];
-            stat.AddLine("Overflow = " + JSROOT.gStyle.StatFormat(res));
+            stat.AddLine("Overflow = " + stat.Format(res));
          }
 
          if (print_integral > 0) {
-            stat.AddLine("Integral = " + JSROOT.gStyle.StatEntriesFormat(data.integral));
+            stat.AddLine("Integral = " + stat.Format(data.integral,"entries"));
          }
 
          if (print_skew > 0)
-            stat.AddLine("Skew = not avail");
+            stat.AddLine("Skew = <not avail>");
 
          if (print_kurt > 0)
-            stat.AddLine("Kurt = not avail");
+            stat.AddLine("Kurt = <not avail>");
+      }
+
+      if (dofit!=0) {
+         var f1 = this.FindF1();
+         if (f1!=null) {
+            var print_fval    = dofit%10;
+            var print_ferrors = (dofit/10)%10;
+            var print_fchi2   = (dofit/100)%10;
+            var print_fprob   = (dofit/1000)%10;
+
+            if (print_fchi2 > 0)
+               stat.AddLine("#chi^2 / ndf = " + stat.Format(f1.fChisquare,"fit") + " / " + f1.fNDF);
+            if (print_fprob > 0)
+               stat.AddLine("Prob = <not avail>");
+            if ((print_fval > 0) || (print_ferrors > 0)) {
+               for(var n=0;n<f1.fNpar;n++) {
+                  var parname = f1.GetParName(n);
+                  var parvalue = f1.GetParValue(n);
+                  if (parvalue != null) parvalue = stat.Format(Number(parvalue),"fit");
+                                 else  parvalue = "<not avail>";
+                  var parerr = "";
+                  if (f1.fParErrors!=null) {
+                     parerr = stat.Format(f1.fParErrors[n],"last");
+                     if ((Number(parerr)==0.0) && (f1.fParErrors[n]!=0.0)) parerr = stat.Format(f1.fParErrors[n],"4.2g");
+                  }
+
+                  if ((print_ferrors > 0) && (parerr.length>0))
+                     stat.AddLine(parname + " = " + parvalue + " #pm " + parerr);
+                  else
+                     stat.AddLine(parname + " = " + parvalue);
+               }
+            }
+         }
       }
 
       // adjust the size of the stats box with the number of lines
@@ -5106,7 +5802,7 @@
 
       // if we need to draw line or area, we need extra point for correct drawing
       if ((right == this.nbinsx) && (this.options.Error == 0) && (point!=null)) {
-         var extrapoint = jQuery.extend(true, {}, point);
+         var extrapoint = JSROOT.extend({}, point);
          extrapoint.x = grx2;
          draw_bins.push(extrapoint);
       }
@@ -5129,68 +5825,82 @@
       if (JSROOT.gStyle.Tooltip)
          nodes.append("svg:title").text(function(d) { return d.tip; });
 
-      var xerr = null, yerr = null;
+      if (this.options.Error == 12) {
+         // draw as rectangles
 
-      /* Draw x-error indicators */
-      if (this.options.Error > 0)
-         nodes.append("svg:line")
+         nodes.append("svg:rect")
+            .attr("x", function(d) { return (-d.xerr).toFixed(1); })
+            .attr("y", function(d) { return (-d.yerr).toFixed(1); })
+            .attr("width", function(d) { return (2*d.xerr).toFixed(1); })
+            .attr("height", function(d) { return (2*d.yerr).toFixed(1); })
+            .call(this.attline.func)
+            .call(this.fill.func)
+            .style("pointer-events","visibleFill") // even when fill attribute not specified, get mouse events
+            .property("fill0", this.fill.color) // remember color
+            .on('mouseover', function() {
+               if (JSROOT.gStyle.Tooltip)
+                 d3.select(this).transition().duration(100).style("fill", "grey");
+            })
+            .on('mouseout', function() {
+               d3.select(this).transition().duration(100).style("fill", this['fill0']);
+            });
+
+
+            //.append("svg:title").text(function(d) { return d.tip; });
+      } else
+      if (this.options.Error > 0) {
+         /* Draw main error indicators */
+         nodes.append("svg:line") // x indicator
               .attr("x1", function(d) { return (-d.xerr).toFixed(1); })
               .attr("y1", 0)
               .attr("x2", function(d) { return d.xerr.toFixed(1); })
               .attr("y2", 0)
               .call(this.attline.func);
-
-      if (this.options.Error == 11) {
-         nodes.append("svg:line")
-              .attr("y1", -3)
-              .attr("x1", function(d) { return (-d.xerr).toFixed(1); })
-              .attr("y2", 3)
-              .attr("x2", function(d) { return (-d.xerr).toFixed(1); })
-              .call(this.attline.func);
-         nodes.append("svg:line")
-              .attr("y1", -3)
-              .attr("x1", function(d) { return d.xerr.toFixed(1); })
-              .attr("y2", 3)
-              .attr("x2", function(d) { return d.xerr.toFixed(1); })
-              .call(this.attline.func);
-      }
-
-      /* Draw y-error indicators */
-      if (this.options.Error > 0)
-         nodes.append("svg:line")
+         nodes.append("svg:line")  // y indicator
               .attr("x1", 0)
               .attr("y1", function(d) { return (-d.yerr).toFixed(1); })
               .attr("x2", 0)
               .attr("y2", function(d) { return d.yerr.toFixed(1); })
               .call(this.attline.func);
+      }
 
       if (this.options.Error == 11) {
          nodes.append("svg:line")
-              .attr("x1", -3)
-              .attr("y1", function(d) { return (-d.yerr).toFixed(1); })
-              .attr("x2", 3)
-              .attr("y2", function(d) { return (-d.yerr).toFixed(1); })
-              .call(this.attline.func);
+                .attr("y1", -3)
+                .attr("x1", function(d) { return (-d.xerr).toFixed(1); })
+                .attr("y2", 3)
+                .attr("x2", function(d) { return (-d.xerr).toFixed(1); })
+                .call(this.attline.func);
          nodes.append("svg:line")
-              .attr("x1", -3)
-              .attr("y1", function(d) { return d.yerr.toFixed(1); })
-              .attr("x2", 3)
-              .attr("y2", function(d) { return d.yerr.toFixed(1); })
-              .call(this.attline.func);
+                .attr("y1", -3)
+                .attr("x1", function(d) { return d.xerr.toFixed(1); })
+                .attr("y2", 3)
+                .attr("x2", function(d) { return d.xerr.toFixed(1); })
+                .call(this.attline.func);
+         nodes.append("svg:line")
+                .attr("x1", -3)
+                .attr("y1", function(d) { return (-d.yerr).toFixed(1); })
+                .attr("x2", 3)
+                .attr("y2", function(d) { return (-d.yerr).toFixed(1); })
+                .call(this.attline.func);
+         nodes.append("svg:line")
+                 .attr("x1", -3)
+                 .attr("y1", function(d) { return d.yerr.toFixed(1); })
+                 .attr("x2", 3)
+                 .attr("y2", function(d) { return d.yerr.toFixed(1); })
+                 .call(this.attline.func);
       }
 
-      // draw dot markers only when no error was drawn
-      if ((this.histo['fMarkerStyle'] == 1) && (this.options.Error > 0)) return;
-
-      var marker = JSROOT.Painter.createAttMarker(this.histo);
-
-      nodes.append("svg:path").call(marker.func);
+      if ((this.options.Mark > 0) || (this.options.Error == 12)) {
+         // draw markers also when e2 option was specified
+         var marker = JSROOT.Painter.createAttMarker(this.histo);
+         nodes.append("svg:path").call(marker.func);
+      }
    }
 
    JSROOT.TH1Painter.prototype.DrawBins = function() {
 
-      var width = Number(this.svg_frame(true).attr("width")),
-          height = Number(this.svg_frame(true).attr("height"));
+      var width = this.frame_width(), height = this.frame_height();
 
       if (!this.draw_content || (width<=0) || (height<=0)) {
          this.RemoveDrawG();
@@ -5286,6 +5996,7 @@
 
       // create painter and add it to canvas
       var painter = new JSROOT.TH1Painter(histo);
+
       painter.SetDivId(divid, 1);
 
       // here we deciding how histogram will look like and how will be shown
@@ -5315,14 +6026,15 @@
 
       if (painter.options.AutoZoom) painter.AutoZoom();
 
-      return painter;
+      return painter.DrawingReady();
    }
 
    // ==================== painter for TH2 histograms ==============================
 
    JSROOT.TH2Painter = function(histo) {
       JSROOT.THistPainter.call(this, histo);
-      this.paletteColors = [];
+      this.fContour = null; // contour levels
+      this.fUserContour = false; // are this user-defined levels
    }
 
    JSROOT.TH2Painter.prototype = Object.create(JSROOT.THistPainter.prototype);
@@ -5345,12 +6057,11 @@
 
    JSROOT.TH2Painter.prototype.FindPalette = function(remove) {
       if ('fFunctions' in this.histo)
-         for ( var i in this.histo.fFunctions.arr) {
+         for (var i in this.histo.fFunctions.arr) {
             var func = this.histo.fFunctions.arr[i];
-            if (func['_typename'] != 'TPaletteAxis')
-               continue;
+            if (func['_typename'] != 'TPaletteAxis') continue;
             if (remove) {
-               this.histo.fFunctions.arr.splice(i, 1);
+               this.histo.fFunctions.RemoveAt(i);
                return null;
             }
 
@@ -5363,7 +6074,7 @@
    JSROOT.TH2Painter.prototype.ToggleColz = function() {
       if (this.FindPalette() == null) {
          var shrink = this.CreatePalette(0.04);
-         this.svg_frame()['frame_painter'].Shrink(0, shrink);
+         this.svg_frame().property('frame_painter').Shrink(0, shrink);
          this.options.Zscale = 1;
          // one should draw palette
          JSROOT.Painter.drawPaletteAxis(this.divid, this.FindPalette());
@@ -5430,10 +6141,12 @@
 
       pal['_AutoCreated'] = true;
 
-      pal['fX1NDC'] = this.svg_frame()['NDC'].x2 - rel_width;
-      pal['fY1NDC'] = this.svg_frame()['NDC'].y1;
-      pal['fX2NDC'] = this.svg_frame()['NDC'].x2;
-      pal['fY2NDC'] = this.svg_frame()['NDC'].y2;
+      var ndc = this.svg_frame().property('NDC');
+
+      pal['fX1NDC'] = ndc.fX2NDC - rel_width;
+      pal['fY1NDC'] = ndc.fY1NDC;
+      pal['fX2NDC'] = ndc.fX2NDC;
+      pal['fY2NDC'] = ndc.fY2NDC;
       pal['fInit'] = 1;
       pal['fShadowColor'] = 1;
       pal['fCorenerRadius'] = 0;
@@ -5480,13 +6193,12 @@
          this.histo['fFunctions'] = JSROOT.Create("TList");
 
       // place colz in the beginning, that stat box is always drawn on the top
-      this.histo.fFunctions.arr.unshift(pal);
+      this.histo.fFunctions.AddFirst(pal);
 
       // and at the end try to check how much place will be used by the labels
       // in the palette
 
-      var width = Number(this.svg_frame(true).attr("width")),
-          height = Number(this.svg_frame(true).attr("height"));
+      var width = this.frame_width(), height = this.frame_height();
 
       var axisOffset = Math.round(axis['fLabelOffset'] * width);
       var tickSize = Math.round(axis['fTickSize'] * width);
@@ -5498,7 +6210,7 @@
 
       var maxlen = 0;
       for (var i in ticks) {
-         var len = axisfont.stringWidth(this.svg_frame(true), ticks[i]);
+         var len = axisfont.stringWidth(this.svg_frame(), ticks[i]);
          if (len > maxlen) maxlen = len;
       }
 
@@ -5558,7 +6270,7 @@
    }
 
    JSROOT.TH2Painter.prototype.CountStat = function(cond) {
-      var stat_sum0 = 0, stat_sumx1 = 0, stat_sumy1 = 0, stat_sumx2 = 0, stat_sumy2 = 0, stat_sumxy2 = 0;
+      var stat_sum0 = 0, stat_sumx1 = 0, stat_sumy1 = 0, stat_sumx2 = 0, stat_sumy2 = 0, stat_sumxy = 0;
 
       var res = { entries: 0, integral: 0, meanx: 0, meany: 0, rmsx: 0, rmsy: 0, matrix : [], xmax: 0, ymax:0, wmax: null };
       for (var n = 0; n < 9; n++) res.matrix.push(0);
@@ -5594,8 +6306,17 @@
             stat_sumy1 += yy * zz;
             stat_sumx2 += xx * xx * zz;
             stat_sumy2 += yy * yy * zz;
-            stat_sumxy2 += xx * yy * zz;
+            stat_sumxy += xx * yy * zz;
          }
+      }
+
+      if (!this.IsAxisZoomed("x") && !this.IsAxisZoomed("y") && (this.histo.fTsumw>0)) {
+         stat_sum0 = this.histo.fTsumw;
+         stat_sumx1 = this.histo.fTsumwx;
+         stat_sumx2 = this.histo.fTsumwx2;
+         stat_sumy1 = this.histo.fTsumwy;
+         stat_sumy2 = this.histo.fTsumwy2;
+         stat_sumxy = this.histo.fTsumwxy;
       }
 
       if (stat_sum0 > 0) {
@@ -5611,7 +6332,7 @@
       return res;
    }
 
-   JSROOT.TH2Painter.prototype.FillStatistic = function(stat, dostat) {
+   JSROOT.TH2Painter.prototype.FillStatistic = function(stat, dostat, dofit) {
       if (!this.histo) return false;
 
       var data = this.CountStat();
@@ -5630,20 +6351,20 @@
          stat.AddLine(this.histo['fName']);
 
       if (print_entries > 0)
-         stat.AddLine("Entries = " + JSROOT.gStyle.StatEntriesFormat(data.entries));
+         stat.AddLine("Entries = " + stat.Format(data.entries,"entries"));
 
       if (print_mean > 0) {
-         stat.AddLine("Mean x = " + JSROOT.gStyle.StatFormat(data.meanx));
-         stat.AddLine("Mean y = " + JSROOT.gStyle.StatFormat(data.meany));
+         stat.AddLine("Mean x = " + stat.Format(data.meanx));
+         stat.AddLine("Mean y = " + stat.Format(data.meany));
       }
 
       if (print_rms > 0) {
-         stat.AddLine("RMS x = " + JSROOT.gStyle.StatFormat(data.rmsx));
-         stat.AddLine("RMS y = " + JSROOT.gStyle.StatFormat(data.rmsy));
+         stat.AddLine("RMS x = " + stat.Format(data.rmsx));
+         stat.AddLine("RMS y = " + stat.Format(data.rmsy));
       }
 
       if (print_integral > 0) {
-         stat.AddLine("Integral = " + JSROOT.gStyle.StatEntriesFormat(data.matrix[4]));
+         stat.AddLine("Integral = " + stat.Format(data.matrix[4],"entries"));
       }
 
       if (print_skew > 0) {
@@ -5670,39 +6391,74 @@
          stat.pavetext['fY1NDC'] = 0.93 - stath;
          stat.pavetext['fY2NDC'] = 0.93;
       }
+
+//      if (dofit!=0) {
+//         var f1 = this.FindF1();
+//         if (f1!=null) {}
+//      }
+
       return true;
    }
 
    JSROOT.TH2Painter.prototype.getValueColor = function(zc) {
-      var wmin = this.minbin, wmax = this.maxbin;
-      var wlmin = wmin, wlmax = wmax;
-      var ndivz = this.histo['fContour'].length;
-      if (ndivz < 16) ndivz = 16;
-      var scale = ndivz / (wlmax - wlmin);
-      if (this.options.Logz) {
-         if (wmin <= 0 && wmax > 0)
-            wmin = Math.min(1.0, 0.001 * wmax);
-         wlmin = Math.log(wmin) / Math.log(10);
-         wlmax = Math.log(wmax) / Math.log(10);
-      }
+      if (this.fContour == null) {
+         // if not initialized, first create controur array
+         // difference from ROOT - fContour includes also last element with maxbin, which makes easier to build logz
+         this.fUserContour = false;
 
-      if (this.paletteColors.length == 0) {
-         var saturation = 1, lightness = 0.5, maxHue = 280, minHue = 0, maxPretty = 50;
-         for (var i = 0; i < maxPretty; i++) {
-            var hue = (maxHue - (i + 1) * ((maxHue - minHue) / maxPretty)) / 360.0;
-            var rgbval = JSROOT.Painter.HLStoRGB(hue, lightness, saturation);
-            this.paletteColors.push(rgbval);
+         if ((this.histo.fContour!=null) && (this.histo.fContour.length>0) && this.histo.TestBit(JSROOT.TH1StatusBits.kUserContour)) {
+            this.fContour = JSROOT.clone(this.histo.fContour);
+            this.fUserContour = true;
+         } else {
+            var nlevels = 20;
+            if (this.histo.fContour != null) nlevels = this.histo.fContour.length;
+            if (nlevels<1) nlevels = 20;
+            this.fContour = [];
+            this.zmin = this.minbin;
+            this.zmax = this.maxbin;
+            if (this.zoom_zmin != this.zoom_zmax) {
+               this.zmin = this.zoom_zmin;
+               this.zmax = this.zoom_zmax;
+            }
+
+            if (this.options.Logz) {
+               if (this.zmax <= 0) this.zmax = 1.;
+               if (this.zmin <= 0) this.zmin = 0.001*this.zmax;
+               var logmin = Math.log(this.zmin)/Math.log(10);
+               var logmax = Math.log(this.zmax)/Math.log(10);
+               var dz = (logmax-logmin)/nlevels;
+               this.fContour.push(this.zmin);
+               for (var level=1; level<nlevels; level++)
+                  this.fContour.push(Math.exp((logmin + dz*level)*Math.log(10)));
+               this.fContour.push(this.zmax);
+            } else {
+               if ((this.zmin == this.zmax) && (this.zmin != 0)) {
+                  this.zmax += 0.01*Math.abs(this.zmax);
+                  this.zmin -= 0.01*Math.abs(this.zmin);
+               }
+               var dz = (this.zmax-this.zmin)/nlevels;
+               for (var level=0; level<=nlevels; level++)
+                  this.fContour.push(this.zmin + dz*level);
+            }
          }
       }
-      if (this.options.Logz) zc = Math.log(zc) / Math.log(10);
-      if (zc < wlmin) zc = wlmin;
-      var ncolors = this.paletteColors.length;
-      var color = Math.round(0.01 + (zc - wlmin) * scale);
-      var theColor = Math.round((color + 0.99) * ncolors / ndivz) - 1;
-      var icol = theColor % ncolors;
-      if (icol < 0) icol = 0;
 
-      return this.paletteColors[icol];
+      var color = -1;
+      if (this.fUserContour || this.options.Logz) {
+         for (var k in this.fContour) {
+            if (zc >= this.fContour[k]) color++;
+         }
+      } else {
+         color = Math.floor(0.01+(zc-this.zmin)*(this.fContour.length-1)/(this.zmax-this.zmin));
+      }
+
+      // do not draw bin where color is negative
+      if (color<0) return null;
+
+      var palette = JSROOT.gStyle.GetColorPalette();
+      var theColor = Math.floor((color+0.99)*palette.length/(this.fContour.length-1));
+      if (theColor > palette.length-1) theColor = palette.length-1;
+      return palette[theColor];
    }
 
    JSROOT.TH2Painter.prototype.CreateDrawBins = function(w, h, coordinates_kind, tipkind) {
@@ -5728,6 +6484,9 @@
          xfactor = 0.5 * w / (i2 - i1) / (this.maxbin - this.minbin);
          yfactor = 0.5 * h / (j2 - j1) / (this.maxbin - this.minbin);
       }
+
+      this.fContour = null; // z-scale ranges when drawing with color
+      this.fUserContour = false;
 
       var local_bins = new Array;
 
@@ -5757,19 +6516,23 @@
             binz = this.histo.getBinContent(i + 1, j + 1);
             if ((binz == 0) || (binz < this.minbin)) continue;
 
-            switch (coordinates_kind) {
-            case 0:
-               point = {
-                  x : grx1,
-                  y : gry2,
-                  width : grx2 - grx1 + 1,  // +1 to fill gaps between colored bins
-                  height : gry1 - gry2 + 1,
-                  stroke : "none",
-                  fill : this.getValueColor(binz)
-               }
-               point['tipcolor'] = (point['fill'] == "black") ? "grey" : "black";
-               break;
+            point = null;
 
+            switch (coordinates_kind) {
+            case 0: {
+               fillcol = this.getValueColor(binz);
+               if (fillcol!=null)
+                 point = {
+                   x : grx1,
+                   y : gry2,
+                   width : grx2 - grx1 + 1,  // +1 to fill gaps between colored bins
+                   height : gry1 - gry2 + 1,
+                   stroke : "none",
+                   fill : fillcol,
+                   tipcolor: (fillcol == 'black') ? "grey" : "black"
+                 };
+               break;
+            }
             case 1:
                shrx = xfactor * (this.maxbin - binz);
                shry = yfactor * (this.maxbin - binz);
@@ -5792,6 +6555,8 @@
                }
                break;
             }
+
+            if (point==null) continue;
 
             if (tipkind == 1)
                point['tip'] = "x = [" + this.AxisAsText("x", x1) + ", " + this.AxisAsText("x", x2) + "]\n" +
@@ -5879,8 +6644,7 @@
 
       this.RecreateDrawG();
 
-      var w = Number(this.svg_frame(true).attr("width")),
-          h = Number(this.svg_frame(true).attr("height"));
+      var w = this.frame_width(), h = this.frame_height();
 
       if ((this.options.Color==2) && !JSROOT.browser.isIE)
          return this.DrawSimpleCanvas(w,h);
@@ -5954,8 +6718,8 @@
       if ((this.FindPalette() == null) && this.create_canvas && (this.options.Zscale > 0)) {
          // create pallette
          var shrink = this.CreatePalette(0.04);
-         this.svg_frame()['frame_painter'].Shrink(0, shrink);
-         this.svg_frame()['frame_painter'].Redraw();
+         this.svg_frame().property('frame_painter').Shrink(0, shrink);
+         this.svg_frame().property('frame_painter').Redraw();
          this.CreateXY();
       } else if (this.options.Zscale == 0) {
          // delete palette - it may appear there due to previous draw options
@@ -6014,13 +6778,15 @@
       else
          painter.Draw2D();
 
-      return painter;
+      return painter.DrawingReady();
    }
 
    JSROOT.Painter.drawHistogram3D = function(divid, obj, opt) {
+      var painter = new JSROOT.TObjectPainter;
       JSROOT.AssertPrerequisites('3d', function() {
-         JSROOT.Painter.real_drawHistogram3D(divid, obj, opt);
+         JSROOT.Painter.real_drawHistogram3D(divid, obj, opt, painter);
       });
+      return painter;
    }
 
    // ====================================================================
@@ -6180,10 +6946,8 @@
 
       var painter = new JSROOT.THStackPainter(stack);
       painter.SetDivId(divid);
-
       painter.drawStack(opt);
-
-      return painter
+      return painter.DrawingReady();
    }
 
    // ==============================================================================
@@ -6202,7 +6966,7 @@
    JSROOT.TLegendPainter.prototype.drawLegend = function() {
       this.RecreateDrawG(true, ".text_layer");
 
-      var svg = this.svg_pad(true);
+      var svg = this.svg_pad();
       var pave = this.legend;
 
       var x = 0, y = 0, w = 0, h = 0;
@@ -6223,15 +6987,18 @@
       var lwidth = pave['fBorderSize'] ? pave['fBorderSize'] : 0;
       var fill = this.createAttFill(pave);
       var lcolor = JSROOT.Painter.createAttLine(pave, lwidth);
+      var nlines = pave.fPrimitives.arr.length;
 
-      var p = this.draw_g
-                 .attr("x", x)
+      this.draw_g.attr("x", x)
                  .attr("y", y)
                  .attr("width", w)
                  .attr("height", h)
                  .attr("transform", "translate(" + x + "," + y + ")");
 
-      p.append("svg:rect")
+      this.StartTextDrawing(pave['fTextFont'], h / (nlines * 1.2));
+
+      this.draw_g
+           .append("svg:rect")
            .attr("x", 0)
            .attr("y", 0)
            .attr("width", w)
@@ -6244,22 +7011,8 @@
       var tpos_x = Math.round(pave['fMargin'] * w);
       var padding_x = Math.round(0.03 * w);
       var padding_y = Math.round(0.03 * h);
-      var nlines = pave.fPrimitives.arr.length;
-      var font = JSROOT.Painter.getFontDetails(pave['fTextFont'], h / (nlines * 1.5));
 
-      var min_fact = 1.;
-      for (var j = 0; j < nlines; ++j) {
-         var leg = pave.fPrimitives.arr[j];
-         var lopt = leg['fOption'].toLowerCase();
-         var label = JSROOT.Painter.translateLaTeX(leg['fLabel']);
-         var lw = font.stringWidth(svg, label);
-         var allowed = w - 2*padding_x;
-         if ((lopt.indexOf("h")<0) && (lopt.length>0)) allowed = w - tpos_x - padding_x;
-         var fact = lw > 5 ? allowed / lw : 1.;
-         if (fact < min_fact) min_fact = fact;
-      }
-
-      if (min_fact<1) font.size = Math.floor(font.size * min_fact);
+      var leg_painter = this;
 
       var step_y = (h - 2*padding_y)/nlines;
 
@@ -6267,9 +7020,8 @@
          var leg = pave.fPrimitives.arr[i];
          var lopt = leg['fOption'].toLowerCase();
 
-         var label = JSROOT.Painter.translateLaTeX(leg['fLabel']);
-
-         var pos_y = padding_y + (i+0.5)*step_y; // middle of each line
+         var pos_y = Math.round(padding_y + i*step_y); // top corner
+         var mid_y = Math.round(padding_y + (i+0.5)*step_y); // top corner
 
          var attfill = leg;
          var attmarker = leg;
@@ -6290,21 +7042,21 @@
          if (lopt.indexOf('f') != -1) {
             // box total height is yspace*0.7
             // define x,y as the center of the symbol for this entry
-            p.append("svg:rect")
+            this.draw_g.append("svg:rect")
                    .attr("x", padding_x)
-                   .attr("y", pos_y-step_y/3)
+                   .attr("y", Math.round(pos_y+step_y*0.1))
                    .attr("width", tpos_x - 2*padding_x)
-                   .attr("height", 2*step_y/3)
+                   .attr("height", Math.round(step_y*0.8))
                    .call(llll.func)
                    .call(fill.func);
          }
          // Draw line
          if (lopt.indexOf('l') != -1) {
-            p.append("svg:line")
+            this.draw_g.append("svg:line")
                .attr("x1", padding_x)
-               .attr("y1", pos_y)
+               .attr("y1", mid_y)
                .attr("x2", tpos_x - padding_x)
-               .attr("y2", pos_y)
+               .attr("y2", mid_y)
                .call(llll.func);
          }
          // Draw error only
@@ -6313,73 +7065,28 @@
          // Draw Polymarker
          if (lopt.indexOf('p') != -1) {
             var marker = JSROOT.Painter.createAttMarker(attmarker);
-            p.append("svg:path")
-                .attr("transform", function(d) { return "translate(" + tpos_x/2 + "," + pos_y + ")"; })
+            this.draw_g.append("svg:path")
+                .attr("transform", function(d) { return "translate(" + tpos_x/2 + "," + mid_y + ")"; })
                 .call(marker.func);
          }
 
          var pos_x = tpos_x;
          if ((lopt.indexOf('h')>=0) || (lopt.length==0)) pos_x = padding_x;
 
-         if ((JSROOT.gStyle.MathJax < 1) || (label.indexOf("#frac")<0)) {
-           p.append("text")
-              .attr("class", "text")
-              .attr("text-anchor", "start")
-              .attr("dominant-baseline", "central")
-              .attr("x", pos_x)
-              .attr("y", pos_y /*+ font.size*0.3*/)
-              .call(font.func)
-              .attr("fill", tcolor)
-              .text(label);
-         } else {
-
-            var fo_x = Math.round(pos_x);
-            var fo_y = Math.round(pos_y - 0.5*step_y);
-            var fo_w = Math.round(w - padding_x - pos_x);
-            var fo_h = Math.round(step_y);
-
-            var fo = this.draw_g.append("foreignObject").attr("width", fo_w).attr("height", fo_h);
-            this.SetForeignObjectPosition(fo, fo_x, fo_y);
-
-            // this is just workaround, one need real parser to find all #frac and so on
-            label = label.replace("#frac","\\(\\frac") + "\\)";
-
-            var body = fo.append("xhtml:body")
-                         .style("display", "table")
-                         .append("xhtml:div")
-                         .style("display", "table-cell")
-                         .style('vertical-align', 'middle') // force to align in the center
-                         .style("font", font.asStyle())
-                         .html(label);
-
-            JSROOT.AssertPrerequisites('mathjax', function() {
-               if (typeof MathJax != 'object') return;
-
-               // MathJax.Hub.Queue(["Typeset", MathJax.Hub, body.node()]);
-
-               MathJax.Hub.Queue(function() {
-                  MathJax.Hub.Typeset(body.node());
-                  // rescale one again
-                  var rect = body.node().getBoundingClientRect();
-                  var fact_x = parseInt(rect.right - rect.left) / fo_w;
-                  var fact_y = parseInt(rect.bottom - rect.top) / fo_h;
-                  if (Math.max(fact_x, fact_y) > 1)
-                     body.style("font", font.asStyle(Math.round(font.size/Math.max(fact_x, fact_y))));
-               });
-            });
-
-
-         }
-
+         this.DrawText("start", pos_x, pos_y, w-pos_x-padding_x, step_y, leg['fLabel'], tcolor);
       }
+
+      // rescale after all entries are shown
+      this.FinishTextDrawing();
+
       if (lwidth && lwidth > 1) {
-         p.append("svg:line")
+         this.draw_g.append("svg:line")
             .attr("x1", w + (lwidth / 2))
             .attr("y1", lwidth + 1)
             .attr("x2", w + (lwidth / 2))
             .attr("y2",  h + lwidth - 1)
             .call(lcolor.func);
-         p.append("svg:line")
+         this.draw_g.append("svg:line")
             .attr("x1", lwidth + 1)
             .attr("y1", h + (lwidth / 2))
             .attr("x2", w + lwidth - 1)
@@ -6387,24 +7094,7 @@
             .call(lcolor.func);
       }
 
-      var pthis = this;
-
-      this.AddDrag('leg', this.draw_g, {
-         move : function(x, y, dx, dy) {
-            pthis.draw_g.attr("transform", "translate(" + x + "," + y + ")");
-
-            pave['fX1NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pave['fX2NDC'] += dx / Number(pthis.svg_pad(true).attr("width"));
-            pave['fY1NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-            pave['fY2NDC'] -= dy / Number(pthis.svg_pad(true).attr("height"));
-         },
-         resize : function(width, height) {
-            pave['fX2NDC'] = pave['fX1NDC'] + width  / Number(pthis.svg_pad(true).attr("width"));
-            pave['fY1NDC'] = pave['fY2NDC'] - height / Number(pthis.svg_pad(true).attr("height"));
-
-            pthis.drawLegend();
-         }
-      });
+      this.AddDrag({ obj:pave, redraw: 'drawLegend' });
    }
 
    JSROOT.TLegendPainter.prototype.Redraw = function() {
@@ -6415,7 +7105,7 @@
       var painter = new JSROOT.TLegendPainter(obj);
       painter.SetDivId(divid);
       painter.Redraw();
-      return painter;
+      return painter.DrawingReady();
    }
 
    // =============================================================
@@ -6561,7 +7251,7 @@
       var painter = new JSROOT.TMultiGraphPainter(mgraph);
       painter.SetDivId(divid);
       painter.drawMultiGraph(opt);
-      return painter;
+      return painter.DrawingReady();
    }
 
    // =====================================================================================
@@ -6583,8 +7273,7 @@
 
       var pavelabel = this.text;
 
-      var w = Number(this.svg_pad(true).attr("width")),
-          h = Number(this.svg_pad(true).attr("height"));
+      var w = this.pad_width(), h = this.pad_height();
 
       var pos_x = pavelabel['fX1NDC'] * w;
       var pos_y = (1.0 - pavelabel['fY1NDC']) * h;
@@ -6606,18 +7295,14 @@
       if (valign == 1) baseline = 'bottom';
       else if (valign == 2) baseline = 'middle';
       else if (valign == 3) baseline = 'top';
-      var lmargin = 0;
-      switch (halign) {
-         case 1: lmargin = pavelabel['fMargin'] * width; break;
-         case 2: lmargin = width / 2; break;
-         case 3: lmargin = width - (pavelabel['fMargin'] * width); break;
-      }
+
       var lwidth = pavelabel['fBorderSize'] ? pavelabel['fBorderSize'] : 0;
-      var font = JSROOT.Painter.getFontDetails(pavelabel['fTextFont'], height / 1.9);
 
       var lcolor = JSROOT.Painter.createAttLine(pavelabel, lwidth);
 
       var pave = this.draw_g
+                   .attr("x", pos_x)
+                   .attr("y", pos_y)
                    .attr("width", width)
                    .attr("height", height)
                    .attr("transform", "translate(" + pos_x + "," + pos_y + ")");
@@ -6631,19 +7316,11 @@
              .style("stroke-width", lwidth ? 1 : 0)
              .style("stroke", lcolor.color);
 
-      var line = JSROOT.Painter.translateLaTeX(pavelabel['fLabel']);
+      this.StartTextDrawing(pavelabel['fTextFont'], height / 1.7);
 
-      var lw = font.stringWidth(this.svg_pad(true), line);
-      if (lw > width) font.size = Math.floor(font.size * (width / lw));
+      this.DrawText(align, 0.02*width, 0, 0.96*width, height, pavelabel['fLabel'], tcolor);
 
-      pave.append("text")
-             .attr("class", "text")
-             .attr("text-anchor", align)
-             .attr("x", lmargin)
-             .attr("y", (height / 2) + (font.size / 3))
-             .call(font.func)
-             .attr("fill", tcolor)
-             .text(line);
+      this.FinishTextDrawing();
 
       if (lwidth && lwidth > 1) {
          pave.append("svg:line")
@@ -6659,35 +7336,24 @@
                .attr("y2", height + (lwidth / 2))
                .call(lcolor.func);
       }
+
+      var pave_painter = this;
+
+      this.AddDrag({ obj : pavelabel, redraw:'drawPaveLabel' });
    }
 
    JSROOT.TTextPainter.prototype.drawText = function() {
-      this.RecreateDrawG(true, ".text_layer");
 
       var kTextNDC = JSROOT.BIT(14);
 
-      var w = Number(this.svg_pad(true).attr("width")),
-          h = Number(this.svg_pad(true).attr("height"));
-      var align = 'start', halign = Math.round(this.text['fTextAlign'] / 10);
-      var baseline = 'bottom', valign = this.text['fTextAlign'] % 10;
-      if (halign == 1) align = 'start';
-      else if (halign == 2) align = 'middle';
-      else if (halign == 3) align = 'end';
-      if (valign == 1) baseline = 'bottom';
-      else if (valign == 2) baseline = 'middle';
-      else if (valign == 3) baseline = 'top';
-      var lmargin = 0;
-      switch (halign) {
-         case 1: lmargin = this.text['fMargin'] * w; break;
-         case 2: lmargin = w / 2; break;
-         case 3: lmargin = w - (this.text['fMargin'] * w); break;
-      }
+      var w = this.pad_width(), h = this.pad_height(), use_pad = true;
       var pos_x = this.text['fX'], pos_y = this.text['fY'];
       if (this.text.TestBit(kTextNDC)) {
          pos_x = pos_x * w;
          pos_y = (1 - pos_y) * h;
       } else
       if (this.main_painter()!=null) {
+         w = this.frame_width(); h = this.frame_height(); use_pad = false;
          pos_x = this.main_painter().grx(pos_x);
          pos_y = this.main_painter().gry(pos_y);
       } else
@@ -6701,27 +7367,24 @@
          pos_x = ((Math.abs(pad['fX1']) + pos_x) / (pad['fX2'] - pad['fX1'])) * w;
          pos_y = (1 - ((Math.abs(pad['fY1']) + pos_y) / (pad['fY2'] - pad['fY1']))) * h;
       } else {
-         alert("Cannot draw text at x/y coordinates without real TPad object");
+         JSROOT.console("Cannot draw text at x/y coordinates without real TPad object");
          pos_x = w/2;
          pos_y = h/2;
       }
 
+      this.RecreateDrawG(use_pad, use_pad ? ".text_layer" : ".upper_layer", true);
+
       var tcolor = JSROOT.Painter.root_colors[this.text['fTextColor']];
-      var font = JSROOT.Painter.getFontDetails(this.text['fTextFont'], this.text['fTextSize'] * Math.min(w,h));
 
-      var string = this.text['fTitle'];
-      // translate the LaTeX symbols
-      if (this.text['_typename'] == 'TLatex')
-         string = JSROOT.Painter.translateLaTeX(string);
+      var latex_kind = 0, fact = 1.;
+      if (this.text['_typename'] == 'TLatex') { latex_kind = 1; fact = 0.9; } else
+      if (this.text['_typename'] == 'TMathText') { latex_kind = 2; fact = 0.8; }
 
-      this.draw_g.append("text")
-              .attr("class", "text")
-              .attr("x", pos_x.toFixed(1))
-              .attr("y", pos_y.toFixed(1))
-              .call(font.func)
-              .attr("text-anchor", align)
-              .attr("fill", tcolor)
-              .text(string);
+      this.StartTextDrawing(this.text['fTextFont'], this.text['fTextSize'] * Math.min(w,h) * fact);
+
+      this.DrawText(this.text.fTextAlign, pos_x, pos_y, 0, 0, this.text['fTitle'], tcolor, latex_kind);
+
+      this.FinishTextDrawing();
    }
 
    JSROOT.TTextPainter.prototype.UpdateObject = function(obj) {
@@ -6747,14 +7410,14 @@
       var painter = new JSROOT.TTextPainter(text);
       painter.SetDivId(divid);
       painter.Redraw();
-      return painter;
+      return painter.DrawingReady();
    }
 
    JSROOT.Painter.drawStreamerInfo = function(divid, obj) {
-      $("#" + divid).css({ overflow : 'auto' });
+      d3.select("#" + divid).style( 'overflow' , 'auto' );
       var painter = new JSROOT.HierarchyPainter('sinfo', divid);
       painter.ShowStreamerInfo(obj);
-      return painter;
+      return painter.DrawingReady();
    }
 
    // ================= painer of raw text ========================================
@@ -6774,165 +7437,53 @@
    }
 
    JSROOT.RawTextPainter.prototype.Draw = function() {
-      var frame = $("#" + this.divid);
-
       var txt = this.txt.value;
       if (txt==null) txt = "<undefined>";
 
       var mathjax = 'mathjax' in this.txt;
 
-      if ('load' in this.txt) {
-         frame.html("<div style='overflow:hidden'></div>");
-         frame.find('div').load(this.txt.load);
-      } else {
-         if (!mathjax && !('as_is' in this.txt)) {
-            var arr = txt.split("\n"); txt = "";
-            for (var i in arr)
-               txt += "<pre>" + arr[i] + "</pre>";
-         }
-         frame.html("<div style='overflow:hidden'>" + txt + "</div>");
+      if (!mathjax && !('as_is' in this.txt)) {
+         var arr = txt.split("\n"); txt = "";
+         for (var i in arr)
+            txt += "<pre>" + arr[i] + "</pre>";
       }
+
+      var frame = d3.select("#" + this.divid);
+      var main = frame.select("div");
+      if (main.empty())
+         main = frame.append("div")
+                     .style('max-width','100%')
+                     .style('max-height','100%')
+                     .style('overflow','auto');
+
+      main.html(txt);
 
       // (re) set painter to first child element
       this.SetDivId(this.divid);
 
-      if (mathjax)
+      if (mathjax) {
+         if (this['loading_mathjax']) return;
+         this['loading_mathjax'] = true;
+         var painter = this;
          JSROOT.AssertPrerequisites('mathjax', function() {
+            painter['loading_mathjax'] = false;
             if (typeof MathJax == 'object') {
-               MathJax.Hub.Queue(["Typeset", MathJax.Hub, frame.get()]);
+               MathJax.Hub.Queue(["Typeset", MathJax.Hub, frame.node()]);
             }
          });
+      }
    }
 
    JSROOT.Painter.drawRawText = function(divid, txt, opt) {
       var painter = new JSROOT.RawTextPainter(txt);
       painter.SetDivId(divid);
       painter.Draw();
-      return painter;
-   }
-
-   // ========== performs tree drawing on server ==================
-
-   JSROOT.TTreePlayer = function(itemname) {
-      JSROOT.TBasePainter.call(this);
-      this.SetItemName(itemname);
-      this.hpainter = null;
-      return this;
-   }
-
-   JSROOT.TTreePlayer.prototype = Object.create( JSROOT.TBasePainter.prototype );
-
-   JSROOT.TTreePlayer.prototype.Show = function(divid) {
-      this.drawid = divid + "_draw";
-
-      $("#" + divid)
-        .html("<div class='treedraw_buttons' style='padding-left:0.5em'>" +
-            "<button class='treedraw_exe'>Draw</button>" +
-            " Expr:<input class='treedraw_varexp' style='width:12em'></input> " +
-            "<button class='treedraw_more'>More</button>" +
-            "</div>" +
-            "<div id='" + this.drawid + "' style='width:100%'></div>");
-
-      var player = this;
-
-      $("#" + divid).find('.treedraw_exe').click(function() { player.PerformDraw(); });
-      $("#" + divid).find('.treedraw_varexp')
-           .val("px:py")
-           .keyup(function(e){
-               if(e.keyCode == 13) player.PerformDraw();
-            });
-
-      $("#" + divid).find('.treedraw_more').click(function() {
-         $(this).remove();
-         $("#" + divid).find(".treedraw_buttons")
-         .append(" Cut:<input class='treedraw_cut' style='width:8em'></input>"+
-                 " Opt:<input class='treedraw_opt' style='width:5em'></input>"+
-                 " Num:<input class='treedraw_number' style='width:7em'></input>" +
-                 " First:<input class='treedraw_first' style='width:7em'></input>");
-
-         $("#" + divid +" .treedraw_opt").val("");
-         $("#" + divid +" .treedraw_number").val("").spinner({ numberFormat: "n", min: 0, page: 1000});
-         $("#" + divid +" .treedraw_first").val("").spinner({ numberFormat: "n", min: 0, page: 1000});
-      });
-
-      this.CheckResize();
-
-      this.SetDivId(divid);
-   }
-
-   JSROOT.TTreePlayer.prototype.PerformDraw = function() {
-
-      var frame = $("#" + this.divid);
-
-      var url = this.GetItemName() + '/exe.json.gz?compact=3&method=Draw';
-      var expr = frame.find('.treedraw_varexp').val();
-      var hname = "h_tree_draw";
-
-      var pos = expr.indexOf(">>");
-      if (pos<0) {
-         expr += ">>" + hname;
-      } else {
-         hname = expr.substr(pos+2);
-         if (hname[0]=='+') hname = hname.substr(1);
-         var pos2 = hname.indexOf("(");
-         if (pos2>0) hname = hname.substr(0, pos2);
-      }
-
-      if (frame.find('.treedraw_more').length==0) {
-         var cut = frame.find('.treedraw_cut').val();
-         var option = frame.find('.treedraw_opt').val();
-         var nentries = frame.find('.treedraw_number').val();
-         var firstentry = frame.find('.treedraw_first').val();
-
-         url += '&prototype="const char*,const char*,Option_t*,Long64_t,Long64_t"&varexp="' + expr + '"&selection="' + cut + '"';
-
-         // if any of optional arguments specified, specify all of them
-         if ((option!="") || (nentries!="") || (firstentry!="")) {
-            if (nentries=="") nentries = "1000000000";
-            if (firstentry=="") firstentry = "0";
-            url += '&option="' + option + '"&nentries=' + nentries + '&firstentry=' + firstentry;
-         }
-      } else {
-         url += '&prototype="Option_t*"&opt="' + expr + '"';
-      }
-      url += '&_ret_object_=' + hname;
-
-      var player = this;
-
-      var req = JSROOT.NewHttpRequest(url, 'object', function(res) {
-         if (res==0) return;
-         $("#"+player.drawid).empty();
-         player.hpainter = JSROOT.draw(player.drawid, res)
-      });
-      req.send();
-   }
-
-   JSROOT.TTreePlayer.prototype.CheckResize = function(force) {
-      $("#" + this.drawid).width($("#" + this.divid).width());
-      var h = $("#" + this.divid).height();
-      var h0 = $("#" + this.divid +" .treedraw_buttons").height();
-      if (h>h0+30) $("#" + this.drawid).height(h - 1 - h0);
-
-      if (this.hpainter) {
-         this.hpainter.CheckResize(force);
-      }
-   }
-
-   JSROOT.drawTreePlayer = function(hpainter, itemname) {
-      var mdi = hpainter.CreateDisplay();
-      if (mdi == null) return null;
-
-      var frame = mdi.FindFrame(itemname, true);
-      if (frame==null) return null;
-
-      var divid = frame.attr('id');
-
-      var player = new JSROOT.TTreePlayer(itemname);
-      player.Show(divid);
-      return player;
+      return painter.DrawingReady();
    }
 
    // =========== painter of hierarchical structures =================================
+
+   JSROOT.hpainter = null; // global pointer
 
    JSROOT.HierarchyPainter = function(name, frameid) {
       JSROOT.TBasePainter.call(this);
@@ -6940,6 +7491,10 @@
       this.frameid = frameid;
       this.h = null; // hierarchy
       this.files_monitoring = (frameid == null); // by default files monitored when nobrowser option specified
+
+      // remember only very first instance
+      if (JSROOT.hpainter == null)
+         JSROOT.hpainter = this;
    }
 
    JSROOT.HierarchyPainter.prototype = Object.create(JSROOT.TBasePainter.prototype);
@@ -6969,7 +7524,7 @@
          var entry = lst.arr[i]
 
          if (typeof (entry['fName']) == 'undefined') {
-            console.log("strange element in StreamerInfo with name " + entry['fName']);
+            JSROOT.console("strange element in StreamerInfo with name " + entry['fName']);
             continue;
          }
 
@@ -7123,7 +7678,6 @@
                         if (dir) {
                            diritem['_name'] = diritem['_keyname'];
                            var dirname = painter.itemFullName(diritem, fff);
-                           // console.log("Expand hierarchy for dir " + dirname);
                            painter.KeysHierarchy(diritem, dir.fKeys, file, dirname + "/");
                         }
                      } else {
@@ -7147,7 +7701,6 @@
                ReadFileObject(fff._file);
             } else {
                // try to reopen ROOT file
-               // console.log("Try to reopen file " + fff._fullurl);
                new JSROOT.TFile(fff._fullurl, ReadFileObject);
             }
          }
@@ -7250,7 +7803,7 @@
    }
 
    JSROOT.HierarchyPainter.prototype.CheckCanDo = function(node) {
-      var cando = { expand : false, display : false, scan : true, open : false,
+      var cando = { expand : false, display : false, scan : true, open : false, monitor:null,
                     img1 : "", img2 : "", html : "", ctxt : false, typename : "", execute: false };
 
       var kind = node["_kind"];
@@ -7328,325 +7881,60 @@
          cando.display = true;
       }
 
+      if (cando.monitor==null) cando.monitor = cando.display;
+
       if ((cando.img1.length==0) && ('_online' in node)) cando.img1 = "img_globe";
 
-      if ('_player' in node) cando.display = true;
+      if ('_player' in node) cando.monitor = false;
       if ('_icon' in node) cando.img1 = node['_icon'];
       if ('_icon2' in node) cando.img2 = node['_icon2'];
 
       return cando;
    }
 
-   JSROOT.HierarchyPainter.prototype.FindFastCommands = function() {
-      var arr = [];
-
-      this.ForEach(function(item) { if (('_fastcmd' in item) && (item._kind == 'Command')) arr.push(item); });
-
-      return arr.length > 0 ? arr : null;
-   }
-
    JSROOT.HierarchyPainter.prototype.ExecuteCommand = function(itemname, callback) {
       // execute item marked as 'Command'
+      // If command requires additional arguments, they could be specified as extra arguments
+      // Or they will be requested interactive
 
       var hitem = this.Find(itemname);
       var url = itemname + "/cmd.json";
+      var pthis = this;
+
+      if ('_numargs' in hitem)
+         for (var n=0;n<hitem._numargs;n++) {
+            var argname = "arg" + (n+1);
+            var argvalue = null;
+            if (n+2<arguments.length) argvalue = arguments[n+2];
+            if ((argvalue==null) && (typeof callback == 'object'))
+               argvalue = prompt("Input argument " + argname + " for command " + hitem._name,"");
+            if (argvalue==null) return;
+            url += ((n==0) ? "?" : "&") + argname + "=" + argvalue;
+         }
+
       if ((callback!=null) && (typeof callback == 'object')) {
          callback.css('background','yellow');
          if (hitem && hitem._title) callback.attr('title', "Executing " + hitem._title);
       }
       var req = JSROOT.NewHttpRequest(url, 'text', function(res) {
-         if (typeof callback=='function') return callback(res);
-         if ((callback!=null) && (typeof callback == 'object')) {
+         if (typeof callback == 'function') return callback(res);
+         if ((callback != null) && (typeof callback == 'object')) {
             var col = ((res!=null) && (res!='false')) ? 'green' : 'red';
             if (hitem && hitem._title) callback.attr('title', hitem._title + " lastres=" + res);
             callback.animate({ backgroundColor: col}, 2000, function() { callback.css('background', ''); });
+            if ((col == 'green') && ('_hreload' in hitem)) pthis.reload();
+            if ((col == 'green') && ('_update_item' in hitem)) pthis.display(hitem._update_item,"update");
          }
       });
       req.send();
    }
 
-   JSROOT.HierarchyPainter.prototype.RefreshHtml = function(force) {
-      if (this.frameid == null) return;
-      var elem = $("#" + this.frameid);
-      if (elem.length == 0) return;
-
-      if (this.h == null) return elem.html("<h2>null</h2>");
-
-      var factcmds = this.FindFastCommands();
-
-      this['html'] = "";
-      if (factcmds) {
-         for (var n in factcmds)
-            this['html'] += "<button class='fast_command'> </button>";
-      }
-      this['html'] += "<p>";
-      this['html'] += "<a href='#open_all'>open all</a>";
-      this['html'] += "| <a href='#close_all'>close all</a>";
-      if ('_online' in this.h)
-         this['html'] += "| <a href='#reload'>reload</a>";
-      else
-         this['html'] += "<a/>";
-
-      if ('disp_kind' in this)
-         this['html'] += "| <a href='#clear'>clear</a>";
-      else
-         this['html'] += "<a/>";
-
-      this['html'] += "</p>";
-
-      this['html'] += '<div class="h_tree">';
-      this.addItemHtml(this.h, null);
-      this['html'] += '</div>';
-
-      var h = this;
-
-      var items = elem.html(this['html'])
-          .find(".h_item")
-          .click(function() { h.tree_click($(this)); });
-
-      if ('disp_kind' in h) {
-         if (JSROOT.gStyle.DragAndDrop)
-            items.draggable({ revert: "invalid", appendTo: "body", helper: "clone" });
-
-         if (JSROOT.gStyle.ContextMenu)
-            items.on('contextmenu', function(e) { h.tree_contextmenu($(this), e); });
-      }
-
-      elem.find(".plus_minus").click(function() { h.tree_click($(this),true); });
-
-      elem.find("a").first().click(function() { h.toggle(true); return false; })
-                    .next().click(function() { h.toggle(false); return false; })
-                    .next().click(function() { h.reload(); return false; })
-                    .next().click(function() { h.clear(false); return false; });
-
-      if (factcmds)
-         elem.find('.fast_command').each(function(index) {
-            if ('_icon' in factcmds[index])
-               $(this).text("").append('<img src="' + factcmds[index]['_icon'] + '"/>');
-            $(this).button()
-                   .attr("item", h.itemFullName(factcmds[index]))
-                   .attr("title", factcmds[index]._title)
-                   .click(function() { h.ExecuteCommand($(this).attr("item"), $(this)); });
-         });
-   }
-
-   JSROOT.HierarchyPainter.prototype.isLastSibling = function(hitem) {
-      if (!hitem || !hitem._parent || !hitem._parent._childs) return false;
-      var chlds = hitem._parent._childs;
-      var indx = chlds.indexOf(hitem);
-      if (indx<0) return false;
-      while (++indx < chlds.length)
-         if (!('_hidden' in chlds[indx])) return false;
-      return true;
-   }
-
-   JSROOT.HierarchyPainter.prototype.addItemHtml = function(hitem, parent) {
-      var isroot = (parent == null);
-      var has_childs = '_childs' in hitem;
-
-      if ('_hidden' in hitem) return;
-
-      var cando = this.CheckCanDo(hitem);
-
-      if (!isroot) hitem._parent = parent;
-
-      var can_click = false;
-
-      if (!has_childs || !cando.scan) {
-         if (cando.expand) {
-            can_click = true;
-            if (cando.img1.length == 0) {
-               cando.img1 = 'img_folder';
-               cando.img2 = 'img_folderopen';
-            }
-         } else
-         if (cando.display || cando.execute) {
-            can_click = true;
-         } else
-         if (cando.html.length > 0) can_click = true;
-      }
-
-      hitem['_img1'] = cando.img1;
-      hitem['_img2'] = cando.img2;
-      if (hitem['_img2']=="") hitem['_img2'] = hitem['_img1'];
-
-      // assign root icon
-      if (isroot && (hitem['_img1'].length==0))
-         hitem['_img1'] = hitem['_img2'] = "img_base";
-
-      // assign node icons
-
-      if (hitem['_img1'].length==0)
-         hitem['_img1'] = has_childs ? "img_folder" : "img_page";
-
-      if (hitem['_img2'].length==0)
-         hitem['_img2'] = has_childs ? "img_folderopen" : "img_page";
-
-      var itemname = this.itemFullName(hitem);
-
-      this['html'] += '<div item="' + itemname + '">';
-
-      // build indent
-      var sindent = "";
-      var prnt = isroot ? null : hitem._parent;
-      while ((prnt != null) && (prnt != this.h)) {
-         sindent = '<div class="' + (this.isLastSibling(prnt) ? "img_empty" : "img_line") + '"/>' + sindent;
-         prnt = prnt._parent;
-      }
-      this['html'] += sindent;
-
-      var icon_class = "", plusminus = false;
-
-      if (isroot) {
-         // for root node no extra code
-      } else
-      if (has_childs) {
-         icon_class = hitem._isopen ? "img_minus" : "img_plus";
-         plusminus = true;
-      } else {
-         icon_class = "img_join";
-      }
-
-      if (icon_class.length > 0) {
-         this['html'] += '<div class="' + icon_class;
-         if (this.isLastSibling(hitem)) this['html'] += "bottom";
-         if (plusminus) this['html'] += ' plus_minus" style="cursor:pointer';
-         this['html'] += '"/>';
-      }
-
-      // make node icons
-
-      var icon_name = hitem._isopen ? hitem._img2 : hitem._img1;
-
-      if (icon_name.indexOf("img_")==0)
-         this['html'] += '<div class="' + icon_name + '"/>';
-      else
-         this['html'] += '<img src="' + icon_name + '" alt="" style="vertical-align:top"/>';
-
-      this['html'] += '<a';
-      if (can_click || has_childs) this['html'] +=' class="h_item"';
-
-      var element_name = hitem._name;
-
-      if ('_realname' in hitem)
-         element_name = hitem._realname;
-
-      var element_title = "";
-      if ('_title' in hitem) element_title = hitem._title;
-
-      if ('_fullname' in hitem)
-         element_title += "  fullname: " + hitem['_fullname'];
-
-      if (element_title.length == 0) element_title = element_name;
-
-      this['html'] += ' title="' + element_title + '"';
-      this['html'] += '>' + element_name + '</a>';
-
-      if (has_childs && (isroot || hitem._isopen)) {
-         this['html'] += '<div class="h_childs">';
-         for (var i in hitem._childs)
-            this.addItemHtml(hitem._childs[i], hitem);
-         this['html'] += '</div>';
-      }
-
-      this['html'] += '</div>';
-   }
-
-   JSROOT.HierarchyPainter.prototype.tree_click = function(node, plusminus) {
-
-      var itemname = node.parent().attr('item');
-
-      if (itemname==null) return;
-
-      var hitem = this.Find(itemname);
-      if (hitem==null) return;
-
-      if (!plusminus) {
-         var cando = this.CheckCanDo(hitem);
-
-         if (cando.open && (cando.html.length>0))
-            return window.open(cando.html);
-
-         if (cando.expand && (hitem['_childs'] == null))
-            return this.expand(itemname, hitem, node.parent());
-
-         if (cando.display)
-            return this.display(itemname);
-
-         if (cando.execute)
-            return this.ExecuteCommand(itemname, node);
-
-         if (!('_childs' in hitem) || (hitem === this.h)) return;
-      }
-
-      if (hitem._isopen)
-         delete hitem._isopen;
-      else
-         hitem._isopen = true;
-
-      this.UpdateTreeNode(node.parent(), hitem);
-   }
-
-   JSROOT.HierarchyPainter.prototype.open = function(itemname) {
-      console.log("open() no longer available");
-   }
-
-   JSROOT.HierarchyPainter.prototype.UpdateTreeNode = function(node, hitem) {
-      var has_childs = '_childs' in hitem;
-
-      var newname = hitem._isopen ? hitem._img2 : hitem._img1;
-      var oldname = hitem._isopen ? hitem._img1 : hitem._img2;
-
-      var img = node.find("a").first().prev();
-
-      if (newname.indexOf("img_")<0) {
-         img.attr("src", newname);
-      } else {
-         if (newname!=oldname)
-            img.switchClass(oldname, newname);
-      }
-
-      img = img.prev();
-
-      var h = this;
-
-      var new_class = hitem._isopen ? "img_minus" : "img_plus";
-      if (this.isLastSibling(hitem)) new_class += "bottom";
-
-      if (img.hasClass("plus_minus")) {
-         img.attr('class', new_class + " plus_minus");
-      } else
-      if (has_childs) {
-         img.attr('class', new_class + " plus_minus");
-         img.css('cursor', 'pointer');
-         img.click(function() { h.tree_click($(this), true); });
-      }
-
-      var childs = node.children().last();
-      if (childs.hasClass("h_childs")) childs.remove();
-
-      var display_childs = has_childs && hitem._isopen;
-      if (!display_childs) return;
-
-      this['html'] = '<div class="h_childs">';
-      for (var i in hitem._childs)
-         this.addItemHtml(hitem._childs[i], hitem);
-      this['html'] += '</div>';
-      node.append(this['html']);
-      childs = node.children().last();
-
-      var items = childs.find(".h_item")
-                   .click(function() { h.tree_click($(this)); });
-
-      if ('disp_kind' in h) {
-         if (JSROOT.gStyle.DragAndDrop)
-            items.draggable({ revert: "invalid", appendTo: "body", helper: "clone" });
-
-         if (JSROOT.gStyle.ContextMenu)
-            items.on('contextmenu', function(e) { h.tree_contextmenu($(this), e); })
-      }
-
-      childs.find(".plus_minus").click(function() { h.tree_click($(this), true); });
+   JSROOT.HierarchyPainter.prototype.RefreshHtml = function(callback) {
+      if (this.frameid == null) return JSROOT.CallBack(callback);
+      var hpainter = this;
+      JSROOT.AssertPrerequisites('jq2d', function() {
+         hpainter.RefreshHtml(callback);
+      });
    }
 
    JSROOT.HierarchyPainter.prototype.toggle = function(status) {
@@ -7718,95 +8006,90 @@
    JSROOT.HierarchyPainter.prototype.player = function(itemname, option, call_back) {
       var item = this.Find(itemname);
 
-      var player_func = (item && ('_player' in item)) ?  JSROOT.findFunction(item._player) : null;
+      if (!item || !('_player' in item)) return JSROOT.CallBack(call_back, null);
 
-      var res = null;
+      var hpainter = this;
 
-      if (player_func && this.CreateDisplay())
-         res = player_func(this, itemname, option);
+      var prereq = ('_prereq' in item) ? item['_prereq'] : '';
 
-      JSROOT.CallBack(call_back, res);
+      JSROOT.AssertPrerequisites(prereq, function() {
+
+         var player_func = JSROOT.findFunction(item._player);
+         if (player_func == null) return JSROOT.CallBack(call_back, null);
+
+         hpainter.CreateDisplay(function(mdi) {
+            var res = null;
+            if (mdi) res = player_func(hpainter, itemname, option);
+            JSROOT.CallBack(call_back, res);
+         });
+      });
    }
 
    JSROOT.HierarchyPainter.prototype.display = function(itemname, drawopt, call_back) {
-
-      if (!this.CreateDisplay()) return JSROOT.CallBack(call_back, null, itemname);
-
       var h = this;
 
-      var mdi = h['disp'];
+      h.CreateDisplay(function(mdi) {
+         if (!mdi) return JSROOT.CallBack(call_back, null, itemname);
 
-      var updating = drawopt=="update";
+         var updating = (drawopt=="update");
 
-      var item = h.Find(itemname);
+         var item = h.Find(itemname);
 
-      if (item!=null) {
-         var cando = this.CheckCanDo(item);
-         if (!cando.display || ('_player' in item))
-            return this.player(itemname, drawopt, function() { JSROOT.CallBack(call_back, null, itemname); });
-      }
-
-      if (updating) {
-         if ((item==null) || ('_doing_update' in item)) return JSROOT.CallBack(call_back, null, itemname);
-         item['_doing_update'] = true;
-      }
-
-      h.get(itemname, function(item, obj) {
-
-         if (updating && item) delete item['_doing_update'];
-         if (obj==null) return JSROOT.CallBack(call_back, null, itemname);
-
-         var painter = null;
-
-         var pos = drawopt ? drawopt.indexOf("divid:") : -1;
-         if (pos>=0) {
-            var divid = drawopt.slice(pos+6);
-            drawopt = drawopt.slice(0, pos);
-            painter = h.draw(divid, obj, drawopt);
-         } else
-         mdi.ForEachPainter(function(p, frame) {
-            if (p.GetItemName() != itemname) return;
-            painter = p;
-            mdi.ActivateFrame(frame);
-            painter.RedrawObject(obj);
-         });
-
-         if (painter==null) {
-            if (updating) {
-               console.log("something went wrong - did not found painter when doing update of " + itemname);
-            } else {
-               var frame = mdi.FindFrame(itemname, true);
-               if (JSROOT.gStyle.DragAndDrop)
-                  frame.addClass("ui-state-default");
-               painter = h.draw(frame.attr("id"), obj, drawopt);
-
-               mdi.ActivateFrame(frame);
-
-               if (JSROOT.gStyle.DragAndDrop)
-                  frame.droppable({
-                     hoverClass : "ui-state-active",
-                     accept: function(ui) {
-                        var dropname = ui.parent().attr('item');
-                        if ((dropname == itemname) || (dropname==null)) return false;
-
-                        var ditem = h.Find(dropname);
-                        if ((ditem==null) || (!('_kind' in ditem))) return false;
-
-                        return ditem._kind.indexOf("ROOT.")==0;
-                     },
-                     drop: function(event, ui) {
-                        var dropname = ui.draggable.parent().attr('item');
-                        if (dropname==null) return false;
-                        return h.dropitem(dropname, frame.attr("id"));
-                     }
-                  }).removeClass('ui-state-default');
-            }
+         if (item!=null) {
+            var cando = h.CheckCanDo(item);
+            if (!cando.display || ('_player' in item))
+               return h.player(itemname, drawopt, function() { JSROOT.CallBack(call_back, null, itemname); });
          }
 
-         if (painter) painter.SetItemName(itemname); // mark painter as created from hierarchy
+         if (updating) {
+            if ((item==null) || ('_doing_update' in item)) return JSROOT.CallBack(call_back, null, itemname);
+            item['_doing_update'] = true;
+         }
 
-         JSROOT.CallBack(call_back, painter, itemname);
+         h.get(itemname, function(item, obj) {
+
+            if (updating && item) delete item['_doing_update'];
+            if (obj==null) return JSROOT.CallBack(call_back, null, itemname);
+
+            var painter = null;
+
+            var pos = drawopt ? drawopt.indexOf("divid:") : -1;
+            if (pos>=0) {
+               var divid = drawopt.slice(pos+6);
+               drawopt = drawopt.slice(0, pos);
+               painter = h.draw(divid, obj, drawopt);
+            } else {
+               mdi.ForEachPainter(function(p, frame) {
+                  if (p.GetItemName() != itemname) return;
+                  // verify that object was drawn with same option as specified now (if any)
+                  if (!updating && (drawopt!=null) && (p.GetItemDrawOpt()!=drawopt)) return;
+                  painter = p;
+                  mdi.ActivateFrame(frame);
+                  painter.RedrawObject(obj);
+               });
+            }
+
+            if (painter==null) {
+               if (updating) {
+                  JSROOT.console("something went wrong - did not found painter when doing update of " + itemname);
+               } else {
+                  var frame = mdi.FindFrame(itemname, true);
+                  d3.select(frame).html("");
+                  mdi.ActivateFrame(frame);
+                  painter = h.draw(d3.select(frame).attr("id"), obj, drawopt);
+                  h.enable_dropping(frame, itemname);
+               }
+            }
+
+            if (painter) painter.SetItemName(itemname, updating ? null : drawopt); // mark painter as created from hierarchy
+
+            JSROOT.CallBack(call_back, painter, itemname);
+         });
       });
+   }
+
+   JSROOT.HierarchyPainter.prototype.enable_dropping = function(frame, itemname) {
+      // here is not used - implemented with jquery
    }
 
    JSROOT.HierarchyPainter.prototype.dropitem = function(itemname, divid, call_back) {
@@ -7825,21 +8108,22 @@
       return true;
    }
 
-
    JSROOT.HierarchyPainter.prototype.updateAll = function() {
       // method can be used to fetch new objects and update all existing drawings
 
       var mdi = this['disp'];
       if (mdi == null) return;
 
-      var allitems = [], options = [];
+      var allitems = [], options = [], hpainter = this;
 
       // first collect items
       mdi.ForEachPainter(function(p) {
-         if ((p.GetItemName()!=null) && (allitems.indexOf(p.GetItemName())<0)) {
-            allitems.push(p.GetItemName());
-            options.push("update");
-         }
+         var itemname = p.GetItemName();
+         if ((itemname==null) || (allitems.indexOf(itemname)>=0)) return;
+         var item = hpainter.Find(itemname);
+         if ((item==null) || ('_not_monitor' in item) || !hpainter.CheckCanDo(item).monitor) return;
+         allitems.push(itemname);
+         options.push("update");
       }, true); // only visible panels are considered
 
       var painter = this;
@@ -7856,110 +8140,84 @@
 
    JSROOT.HierarchyPainter.prototype.displayAll = function(items, options, call_back) {
 
-      if ((items == null) || (items.length == 0) ||!this.CreateDisplay())
-         return JSROOT.CallBack(call_back);
-
-      if (options == null) options = [];
-      while (options.length < items.length)
-         options.push("");
-
-      var mdi = this['disp'];
-
-      var dropitems = new Array(items.length);
-
-      // First of all check that items are exists, look for cycle extension
-      for (var i in items) {
-         dropitems[i] = null;
-         if (this.Find(items[i])) continue;
-         if (this.Find(items[i] + ";1")) { items[i] += ";1"; continue; }
-
-         var pos = items[i].indexOf("+");
-         if (pos>0) {
-            dropitems[i] = items[i].split("+");
-            items[i] = dropitems[i].shift();
-            // allow to specify _same_ item in different file
-            for (var j in dropitems[i]) {
-               var pos = dropitems[i][j].indexOf("_same_");
-               if ((pos>0) && (this.Find(dropitems[i][j])==null))
-                  dropitems[i][j] = dropitems[i][j].substr(0,pos) + items[i].substr(pos);
-            }
-         }
-
-         // also check if subsequent items has _same_, than use name from first item
-         var pos = items[i].indexOf("_same_");
-         if ((pos>0) && !this.Find(items[i]) && (i>0))
-            items[i] = items[i].substr(0,pos) + items[0].substr(pos);
-      }
-
-      // Than create empty frames for each item
-      for (var i in items)
-         if (options[i]!='update')
-            mdi.CreateFrame(items[i]);
+      if ((items == null) || (items.length == 0)) return JSROOT.CallBack(call_back);
 
       var h = this;
 
-      // We start display of all items parallel
-      for (var i in items)
-         this.display(items[i], options[i], function(painter, itemname) {
-            // one cannot use index i in callback - it is asynchron
-            var indx = items.indexOf(itemname);
-            if (indx<0) return console.log('did not found item ' + itemname);
+      h.CreateDisplay(function(mdi) {
+         if (!mdi) return JSROOT.CallBack(call_back);
 
-            items[indx] = "---"; // mark item as ready
+         if (options == null) options = [];
+         while (options.length < items.length)
+            options.push("");
 
-            function DropNextItem() {
-               if ((painter!=null) && (dropitems[indx]!=null) && (dropitems[indx].length>0))
-                  return h.dropitem(dropitems[indx].shift(), painter.divid, DropNextItem);
+         var dropitems = new Array(items.length);
 
-               var isany = false;
-               for (var cnt in items)
-                  if (items[cnt]!='---') isany = true;
+         // First of all check that items are exists, look for cycle extension
+         for (var i in items) {
+            dropitems[i] = null;
+            if (h.Find(items[i])) continue;
+            if (h.Find(items[i] + ";1")) { items[i] += ";1"; continue; }
 
-               // only when items drawn and all sub-items dropped, one could perform call-back
-               if (!isany) JSROOT.CallBack(call_back);
+            var pos = items[i].indexOf("+");
+            if (pos>0) {
+               dropitems[i] = items[i].split("+");
+               items[i] = dropitems[i].shift();
+               // allow to specify _same_ item in different file
+               for (var j in dropitems[i]) {
+                  var pos = dropitems[i][j].indexOf("_same_");
+                  if ((pos>0) && (h.Find(dropitems[i][j])==null))
+                     dropitems[i][j] = dropitems[i][j].substr(0,pos) + items[i].substr(pos);
+               }
             }
 
-            DropNextItem();
-         });
+            // also check if subsequent items has _same_, than use name from first item
+            var pos = items[i].indexOf("_same_");
+            if ((pos>0) && !h.Find(items[i]) && (i>0))
+               items[i] = items[i].substr(0,pos) + items[0].substr(pos);
+         }
+
+         // Than create empty frames for each item
+         for (var i in items)
+            if (options[i]!='update')
+               mdi.CreateFrame(items[i]);
+
+         // We start display of all items parallel
+         for (var i in items)
+            h.display(items[i], options[i], function(painter, itemname) {
+               // one cannot use index i in callback - it is asynchron
+               var indx = items.indexOf(itemname);
+               if (indx<0) return JSROOT.console('did not found item ' + itemname);
+
+               items[indx] = "---"; // mark item as ready
+
+               function DropNextItem() {
+                  if ((painter!=null) && (dropitems[indx]!=null) && (dropitems[indx].length>0))
+                     return h.dropitem(dropitems[indx].shift(), painter.divid, DropNextItem);
+
+                  var isany = false;
+                  for (var cnt in items)
+                     if (items[cnt]!='---') isany = true;
+
+                  // only when items drawn and all sub-items dropped, one could perform call-back
+                  if (!isany) JSROOT.CallBack(call_back);
+               }
+
+               DropNextItem();
+            });
+      });
    }
 
    JSROOT.HierarchyPainter.prototype.reload = function() {
+      var hpainter = this;
       if ('_online' in this.h)
-         this.OpenOnline(this.h['_online']);
+         this.OpenOnline(this.h['_online'], function() {
+            hpainter.RefreshHtml();
+         });
    }
 
-   JSROOT.HierarchyPainter.prototype.expand = function(itemname, item0, node) {
-      var painter = this;
-
-      if (node==null)
-         node = $("#" + this.frameid).find("[item='" + itemname + "']");
-
-      if (node.length==0)
-         return console.log("Did not found node with item = " + itemname);
-
-      if (item0==null) item0 = this.Find(itemname);
-      if (item0==null) return;
-      item0['_doing_expand'] = true;
-
-      this.get(itemname, function(item, obj) {
-         delete item0['_doing_expand'];
-         if ((item == null) || (obj == null)) return;
-
-         var curr = item;
-         while (curr != null) {
-            if (('_expand' in curr) && (typeof (curr['_expand']) == 'function')) {
-                if (curr['_expand'](item, obj)) {
-                   var itemname = painter.itemFullName(item);
-                   node.attr('item', itemname);
-                   node.find("a").text(item._name);
-                   item._isopen = true;
-                   painter.UpdateTreeNode(node, item);
-                }
-                return;
-            }
-            curr = ('_parent' in curr) ? curr['_parent'] : null;
-         }
-      });
+   JSROOT.HierarchyPainter.prototype.expand = function(itemname) {
+      alert('expand ' + itemname + ' can be used only jquery part loaded');
    }
 
    JSROOT.HierarchyPainter.prototype.GetTopOnlineItem = function() {
@@ -7970,8 +8228,49 @@
    }
 
 
-   JSROOT.HierarchyPainter.prototype.ForEachRootFile = function(call_back) {
+   JSROOT.HierarchyPainter.prototype.ForEachJsonFile = function(call_back) {
+      if (this.h==null) return;
+      if ('_jsonfile' in this.h)
+         return JSROOT.CallBack(call_back, this.h);
 
+      if (this.h._childs!=null)
+         for (var n in this.h._childs) {
+            var item = this.h._childs[n];
+            if ('_jsonfile' in item) JSROOT.CallBack(call_back, item);
+         }
+   }
+
+   JSROOT.HierarchyPainter.prototype.OpenJsonFile = function(filepath, call_back) {
+      var isfileopened = false;
+      this.ForEachJsonFile(function(item) { if (item._jsonfile==filepath) isfileopened = true; });
+      if (isfileopened) return JSROOT.CallBack(call_back);
+
+      var pthis = this;
+      JSROOT.NewHttpRequest(filepath,'object', function(res) {
+         if (res == null) return JSROOT.CallBack(call_back);
+         var h1 = { _jsonfile : filepath, _kind : "ROOT." + res._typename, _jsontmp : res, _name: filepath.split("/").pop() };
+         if ('fTitle' in res) h1._title = res.fTitle;
+         h1._get = function(item,itemname,callback) {
+            if ('_jsontmp' in item) {
+               var res = item._jsontmp; delete item['_jsontmp'];
+               return JSROOT.CallBack(callback, item, res);
+            }
+            JSROOT.NewHttpRequest(item._jsonfile, 'object', function(res) {
+               return JSROOT.CallBack(callback, item, res);
+            }).send(null);
+         }
+         if (pthis.h == null) pthis.h = h1; else
+         if (pthis.h._kind == 'JSROOT.TopFolder') pthis.h._childs.push(h1); else {
+            var h0 = pthis.h;
+            var topname = ('_jsonfile' in h0) ? "Files" : "Items";
+            pthis.h = { _name: topname, _kind: 'JSROOT.TopFolder', _childs : [h0, h1] };
+         }
+
+         pthis.RefreshHtml(call_back);
+      }).send(null);
+   }
+
+   JSROOT.HierarchyPainter.prototype.ForEachRootFile = function(call_back) {
       if (this.h==null) return;
       if ((this.h._kind == "ROOT.TFile") && (this.h._file!=null))
          return JSROOT.CallBack(call_back, this.h);
@@ -7985,9 +8284,7 @@
    }
 
    JSROOT.HierarchyPainter.prototype.OpenRootFile = function(filepath, call_back) {
-
       // first check that file with such URL already opened
-
       var isfileopened = false;
       this.ForEachRootFile(function(item) { if (item._fullurl==filepath) isfileopened = true; });
       if (isfileopened) return JSROOT.CallBack(call_back);
@@ -8006,9 +8303,7 @@
                pthis.h = { _name: topname, _kind: 'JSROOT.TopFolder', _childs : [h0, h1] };
             }
 
-            pthis.RefreshHtml();
-
-            JSROOT.CallBack(call_back);
+            pthis.RefreshHtml(call_back);
          });
       });
    }
@@ -8032,39 +8327,54 @@
       return null;
    }
 
-   JSROOT.HierarchyPainter.prototype.CompleteOnline = function(ready_callback) {
-      // method called at the moment when new description (h.json) is loaded
-      // and before any graphical element is created
-      // one can load extra scripts here
-
-      return JSROOT.CallBack(ready_callback);
+   JSROOT.MarkAsStreamerInfo = function(h,item,obj) {
+      // this function used on THttpServer to mark streamer infos list
+      // as fictional TStreamerInfoList class, which has special draw function
+      if ((obj!=null) && (obj['_typename']=='TList'))
+         obj['_typename'] = 'TStreamerInfoList';
    }
 
    JSROOT.HierarchyPainter.prototype.GetOnlineItem = function(item, itemname, callback) {
       // method used to request object from the http server
 
-      var url = itemname, h_get = false, req = 'root.json.gz?compact=3';
+      var url = itemname, h_get = false, req = '', pthis = this;
 
       if (item != null) {
          var top = item;
          while ((top!=null) && (!('_online' in top))) top = top._parent;
          url = this.itemFullName(item, top);
+
          if ('_doing_expand' in item) {
             h_get = true;
             req  = 'h.json?compact=3';
          } else
-         if (item._kind.indexOf("ROOT.")!=0)
-            req = 'get.json?compact=3';
+         if ('_make_request' in item) {
+            var func = JSROOT.findFunction(item['_make_request']);
+            if (typeof func == 'function') req = func(pthis, item, url);
+         }
+
+         if ((req.length==0) && (item._kind.indexOf("ROOT.")!=0))
+           req = 'item.json.gz?compact=3';
       }
+
+      if ((itemname==null) && (item!=null) && ('_cached_draw_object' in this) && (req.length == 0)) {
+         // special handling for drawGUI when cashed
+         var obj = this['_cached_draw_object'];
+         delete this['_cached_draw_object'];
+         return JSROOT.CallBack(callback, item, obj);
+      }
+
+      if (req.length == 0) req = 'root.json.gz?compact=3';
 
       if (url.length > 0) url += "/";
       url += req;
 
       var itemreq = JSROOT.NewHttpRequest(url, 'object', function(obj) {
 
-         if ((item != null) && (obj != null) && !h_get &&
-             (item._name === "StreamerInfo") && (obj['_typename'] === 'TList'))
-            obj['_typename'] = 'TStreamerInfoList';
+         if (!h_get && (item!=null) && ('_after_request' in item)) {
+            var func = JSROOT.findFunction(item['_after_request']);
+            if (typeof func == 'function') req = func(pthis, item, obj);
+         }
 
          JSROOT.CallBack(callback, item, obj);
       });
@@ -8075,9 +8385,11 @@
    JSROOT.HierarchyPainter.prototype.OpenOnline = function(server_address, user_callback) {
       var painter = this;
 
-      var AdoptHierarchy = function(result) {
+      function AdoptHierarchy(result) {
          painter.h = result;
          if (painter.h == null) return;
+
+         if (('_title' in painter.h) && (painter.h._title!='')) document.title = painter.h._title;
 
          result._isopen = true;
 
@@ -8099,9 +8411,38 @@
             return false;
          }
 
-         painter.CompleteOnline(function() {
-            if (painter.h != null)
-               painter.RefreshHtml(true);
+         var scripts = "", modules = "";
+
+         function updateList(lst, newitems) {
+            if (newitems==null) return lst;
+            var arr = newitems.split(";");
+            for (var n in arr)
+               if (lst.indexOf(arr[n])<0) lst+=arr[n]+";";
+            return lst;
+         }
+
+         painter.ForEach(function(item) {
+            if ('_prereq' in item) modules = updateList(modules, item['_prereq']);
+            if ('_autoload' in item) scripts = updateList(scripts, item['_autoload']);
+         });
+
+         if (scripts.length > 0) scripts = "user:" + scripts;
+
+         // use AssertPrerequisites, while it protect us from race conditions
+         JSROOT.AssertPrerequisites(modules + scripts, function() {
+
+            painter.ForEach(function(item) {
+               if (!('_drawfunc' in item)) return;
+               if (item._kind.indexOf('ROOT.')!=0) return;
+               var typename = item._kind.slice(5);
+               var drawopt = item['_drawopt'];
+               if (JSROOT.canDraw(typename) && (drawopt==null)) return;
+               var func = JSROOT.findFunction(item['_drawfunc']);
+               if (func) JSROOT.addDrawFunc(typename, func, drawopt);
+
+               if (item['_drawscript'] != null)
+                  JSROOT.addDrawFunc(typename, { script:item['_drawscript'], func: item['_drawfunc']} , drawopt);
+            });
 
             JSROOT.CallBack(user_callback, painter);
          });
@@ -8112,13 +8453,10 @@
       if (typeof server_address == 'object') {
          var h = server_address;
          server_address = "";
-         AdoptHierarchy(h);
-         return;
+         return AdoptHierarchy(h);
       }
 
-      var req = JSROOT.NewHttpRequest(server_address + "h.json?compact=3", 'object', AdoptHierarchy);
-
-      req.send(null);
+      JSROOT.NewHttpRequest(server_address + "h.json?compact=3", 'object', AdoptHierarchy).send(null);
    }
 
    JSROOT.HierarchyPainter.prototype.GetOnlineProp = function(itemname) {
@@ -8168,9 +8506,9 @@
       if (cando.display)
          menu.addDrawMenu("Draw in new window", opts, function(arg) { window.open(drawurl+separ+"opt=" +arg); });
 
-      if (cando.display)
-         menu.add("Draw as png", function() {
-            window.open(onlineprop.server + onlineprop.itemname + "/root.png?w=400&h=300&opt=");
+      if (cando.display && (opts!=null) && (opts.length > 0))
+         menu.addDrawMenu("Draw as png", opts, function(arg) {
+            window.open(onlineprop.server + onlineprop.itemname + "/root.png?w=400&h=300&opt=" + arg);
          });
 
       if ('_player' in node)
@@ -8213,143 +8551,191 @@
       return this['_monitoring_on'];
    }
 
-   JSROOT.HierarchyPainter.prototype.tree_contextmenu = function(node, event) {
-      event.preventDefault();
-
-      var itemname = node.parent().attr('item');
-
-      var hitem = this.Find(itemname);
-      if (hitem==null) return;
-
-      var cando = this.CheckCanDo(hitem);
-
-      // if (!cando.display && !cando.ctxt && (itemname!="")) return;
-
-      var onlineprop = this.GetOnlineProp(itemname);
-      var fileprop = this.GetFileProp(itemname);
-
-      var menu = JSROOT.createMenu();
-
-      function qualifyURL(url) {
-         function escapeHTML(s) {
-            return s.split('&').join('&amp;').split('<').join('&lt;').split('"').join('&quot;');
-         }
-         var el = document.createElement('div');
-         el.innerHTML = '<a href="' + escapeHTML(url) + '">x</a>';
-         return el.firstChild.href;
-      }
-
-      var painter = this;
-
-      if (itemname == "") {
-         var addr = "", cnt = 0;
-         function separ() { return cnt++ > 0 ? "&" : "?"; }
-
-         var files = [];
-         this.ForEachRootFile(function(item) { files.push(item._file.fFullURL); });
-
-         if (this.GetTopOnlineItem()==null)
-            addr = JSROOT.source_dir + "index.htm";
-
-         if (this.IsMonitoring())
-            addr += separ() + "monitoring=" + this.MonitoringInterval();
-
-         if (files.length==1)
-            addr += separ() + "file=" + files[0];
-         else
-         if (files.length>1)
-            addr += separ() + "files=" + JSON.stringify(files);
-
-         if (this['disp_kind'])
-            addr += separ() + "layout=" + this['disp_kind'].replace(/ /g, "");
-
-         var items = [];
-
-         if (this['disp'] != null)
-            this['disp'].ForEachPainter(function(painter) {
-               if (painter.GetItemName()!=null)
-                  items.push(painter.GetItemName());
-            });
-
-         if (items.length == 1) {
-            addr += separ() + "item=" + items[0];
-         } else if (items.length > 1) {
-            addr += separ() + "items=" + JSON.stringify(items);
-         }
-
-         menu.add("Direct link", function() { window.open(addr); });
-         menu.add("Only items", function() { window.open(addr + "&nobrowser"); });
-      } else
-      if (onlineprop != null) {
-         this.FillOnlineMenu(menu, onlineprop, itemname);
-      } else
-      if (fileprop != null) {
-
-         var opts = JSROOT.getDrawOptions(cando.typename, 'nosame');
-
-         menu.addDrawMenu("Draw", opts, function(arg) { painter.display(itemname, arg); });
-
-         var filepath = qualifyURL(fileprop.fileurl);
-         if (filepath.indexOf(JSROOT.source_dir) == 0)
-            filepath = filepath.slice(JSROOT.source_dir.length);
-
-         menu.addDrawMenu("Draw in new window", opts, function(arg) {
-            window.open(JSROOT.source_dir + "index.htm?nobrowser&file=" + filepath + "&item=" + fileprop.itemname+"&opt="+arg);
-         });
-      }
-
-      if (menu.size()>0) {
-         menu['tree_node'] = node;
-         menu.add("Close");
-         menu.show(event);
-      }
-
-      return false;
-   }
-
-   JSROOT.HierarchyPainter.prototype.SetDisplay = function(kind, frameid) {
-      this['disp_kind'] = kind;
+   JSROOT.HierarchyPainter.prototype.SetDisplay = function(layout, frameid) {
+      this['disp_kind'] = layout;
       this['disp_frameid'] = frameid;
    }
 
+   JSROOT.HierarchyPainter.prototype.GetLayout = function() {
+      return this['disp_kind'];
+   }
+
    JSROOT.HierarchyPainter.prototype.clear = function(withbrowser) {
-      if ('disp' in this)
+      if ('disp' in this) {
          this['disp'].Reset();
+         delete this['disp'];
+      }
 
       if (withbrowser) {
-         delete this['disp'];
-         $("#" + this.frameid).empty();
+         d3.select("#" + this.frameid).html("");
          delete this.h;
+      } else {
+         // when only display cleared, try to clear all browser items
+         this.ForEach(function(item) {
+            if (('clear' in item) && (typeof item['clear']=='function')) item.clear();
+         });
       }
    }
 
-   JSROOT.HierarchyPainter.prototype.CreateDisplay = function(force) {
+   JSROOT.HierarchyPainter.prototype.GetDisplay = function() {
+      return ('disp' in this) ? this['disp'] : null;
+   }
+
+   JSROOT.HierarchyPainter.prototype.CreateDisplay = function(callback) {
+
+      var h = this;
+
       if ('disp' in this) {
-         if (!force && this['disp'].NumDraw() > 0) return this['disp'];
-         this['disp'].Reset();
-         delete this['disp'];
+         if (h['disp'].NumDraw() > 0) return JSROOT.CallBack(callback, h['disp']);
+         h['disp'].Reset();
+         delete h['disp'];
       }
 
       // check that we can found frame where drawing should be done
-      if (document.getElementById(this['disp_frameid']) == null) return null;
+      if (document.getElementById(this['disp_frameid']) == null)
+         return JSROOT.CallBack(callback, null);
 
-      if (this['disp_kind'] == "tabs")
-         this['disp'] = new JSROOT.TabsDisplay(this['disp_frameid']);
+      if (h['disp_kind'] == "simple")
+         h['disp'] = new JSROOT.SimpleDisplay(h['disp_frameid']);
       else
-      if (this['disp_kind'].search("grid") == 0)
-         this['disp'] = new JSROOT.GridDisplay(this['disp_frameid'], this['disp_kind']);
-      else
-      if (this['disp_kind'] == "simple")
-         this['disp'] = new JSROOT.SimpleDisplay(this['disp_frameid']);
-      else
-         this['disp'] = new JSROOT.CollapsibleDisplay(this['disp_frameid']);
+      if (h['disp_kind'].search("grid") == 0)
+         h['disp'] = new JSROOT.GridDisplay(h['disp_frameid'], h['disp_kind']);
 
-      return this['disp'];
+      if (h['disp'] != null)
+         JSROOT.CallBack(callback, h['disp']);
+      else
+         JSROOT.AssertPrerequisites('jq2d', function() {
+            h.CreateDisplay(callback);
+         });
+   }
+
+   JSROOT.HierarchyPainter.prototype.updateOnOtherFrames = function(painter, obj) {
+      // function should update object drawings for other painters
+      var mdi = this['disp'];
+      if (mdi==null) return false;
+
+      var isany = false;
+      mdi.ForEachPainter(function(p, frame) {
+         if ((p===painter) || (p.GetItemName() != painter.GetItemName())) return;
+         mdi.ActivateFrame(frame);
+         p.RedrawObject(obj);
+         isany = true;
+      });
+      return isany;
    }
 
    JSROOT.HierarchyPainter.prototype.CheckResize = function(force) {
       if ('disp' in this)
          this['disp'].CheckResize();
+   }
+
+   JSROOT.HierarchyPainter.prototype.StartGUI = function(h0, call_back) {
+      var hpainter = this;
+      var filesarr = JSROOT.GetUrlOptionAsArray("file;files");
+      var jsonarr = JSROOT.GetUrlOptionAsArray("json");
+      var filesdir = JSROOT.GetUrlOption("path");
+      if (filesdir!=null) {
+         for (var i in filesarr) filesarr[i] = filesdir + filesarr[i];
+         for (var i in jsonarr) jsonarr[i] = filesdir + jsonarr[i];
+      }
+
+      var itemsarr = JSROOT.GetUrlOptionAsArray("item;items");
+
+      var optionsarr = JSROOT.GetUrlOptionAsArray("opt;opts");
+
+      var monitor = JSROOT.GetUrlOption("monitoring");
+
+      if ((jsonarr.length>0) && (itemsarr.length==0)) itemsarr.push("");
+
+      var layout = JSROOT.GetUrlOption("layout");
+      if (!this['disp_kind'] || (layout!=null))
+         this['disp_kind'] = (layout && layout.length>0) ? layout : 'simple';
+
+      if (JSROOT.GetUrlOption('files_monitoring')!=null) this.files_monitoring = true;
+
+      JSROOT.RegisterForResize(this);
+
+      this.SetMonitoring(monitor);
+
+      function OpenAllFiles() {
+         if (jsonarr.length>0)
+            hpainter.OpenJsonFile(jsonarr.shift(), OpenAllFiles);
+         else if (filesarr.length>0)
+            hpainter.OpenRootFile(filesarr.shift(), OpenAllFiles);
+         else
+            hpainter.displayAll(itemsarr, optionsarr, function() {
+               hpainter.RefreshHtml();
+
+               JSROOT.RegisterForResize(hpainter);
+
+               setInterval(function() { if (hpainter.IsMonitoring()) hpainter.updateAll(); }, hpainter.MonitoringInterval());
+
+               JSROOT.CallBack(call_back);
+            });
+      }
+
+      function AfterOnlineOpened() {
+         // check if server enables monitoring
+         if (('_monitoring' in hpainter.h) && (monitor==null)) {
+            hpainter.SetMonitoring(hpainter.h._monitoring);
+         }
+
+         if (('_layout' in hpainter.h) && (layout==null)) {
+            hpainter['disp_kind'] = hpainter.h._layout;
+         }
+
+         if (('_loadfile' in hpainter.h) && (filesarr.length==0)) {
+            filesarr = JSROOT.ParseAsArray(hpainter.h._loadfile);
+         }
+
+         if (('_drawitem' in hpainter.h) && (itemsarr.length==0)) {
+            itemsarr = JSROOT.ParseAsArray(hpainter.h._drawitem);
+            optionsarr = JSROOT.ParseAsArray(hpainter.h['_drawopt']);
+         }
+
+         OpenAllFiles();
+      }
+
+      if (h0!=null) hpainter.OpenOnline(h0, AfterOnlineOpened);
+               else OpenAllFiles();
+   }
+
+   JSROOT.BuildNobrowserGUI = function() {
+      var myDiv = d3.select('#simpleGUI');
+      var online = false, drawing = false;
+
+      if (myDiv.empty()) {
+         online = true;
+         myDiv = d3.select('#onlineGUI');
+         if (myDiv.empty()) { myDiv = d3.select('#drawGUI'); drawing = true; }
+         if (myDiv.empty()) return alert('no div for simple nobrowser gui found');
+      }
+
+      JSROOT.Painter.readStyleFromURL();
+
+      d3.select('html').style('height','100%');
+      d3.select('body').style({ 'min-height':'100%', 'margin':'0px', "overflow": "hidden"});
+
+      myDiv.style({"position":"absolute", "left":"1px", "top" :"1px", "bottom" :"1px", "right": "1px"});
+
+      var hpainter = new JSROOT.HierarchyPainter('root', null);
+      hpainter.SetDisplay('simple', myDiv.attr('id'));
+
+      var h0 = null;
+      if (online) {
+         var func = JSROOT.findFunction('GetCachedHierarchy');
+         if (typeof func == 'function') h0 = func();
+         if (typeof h0 != 'object') h0 = "";
+      }
+
+      hpainter.StartGUI(h0, function() {
+         if (!drawing) return;
+         var func = JSROOT.findFunction('GetCachedObject');
+         var obj = (typeof func == 'function') ? JSROOT.JSONR_unref(func()) : null;
+         if (obj!=null) hpainter['_cached_draw_object'] = obj;
+         var opt = JSROOT.GetUrlOption("opt");
+         hpainter.display("", opt);
+      });
    }
 
    // ================================================================
@@ -8358,10 +8744,11 @@
 
    JSROOT.MDIDisplay = function(frameid) {
       this.frameid = frameid;
+      d3.select("#"+this.frameid).property('mdi', this);
    }
 
    JSROOT.MDIDisplay.prototype.ForEachFrame = function(userfunc, only_visible) {
-      // method dedicated to iterate over existing panles
+      // method dedicated to iterate over existing panels
       // provided userfunc is called with arguemnts (frame)
 
       alert("ForEachFrame not implemented");
@@ -8373,7 +8760,7 @@
 
       this.ForEachFrame(function(frame) {
          var dummy = new JSROOT.TObjectPainter();
-         dummy.SetDivId($(frame).attr('id'), -1);
+         dummy.SetDivId(d3.select(frame).attr('id'), -1);
          dummy.ForEachPainter(function(painter) { userfunc(painter, frame); });
       }, only_visible);
    }
@@ -8388,7 +8775,7 @@
       var found_frame = null;
 
       this.ForEachFrame(function(frame) {
-         if (frame.prop('title') == searchtitle)
+         if (d3.select(frame).attr('title') == searchtitle)
             found_frame = frame;
       });
 
@@ -8402,11 +8789,14 @@
       // do nothing by default
    }
 
-   JSROOT.MDIDisplay.prototype.CheckResize = function() {
+   JSROOT.MDIDisplay.prototype.CheckResize = function(only_frame_id) {
       // perform resize for each frame
       var resized_frame = null;
 
       this.ForEachPainter(function(painter, frame) {
+
+         if ((only_frame_id != null) && (d3.select(frame).attr('id') != only_frame_id)) return;
+
          if ((painter.GetItemName()!=null) && (typeof painter['CheckResize'] == 'function')) {
             // do not call resize for many painters on the same frame
             if (resized_frame === frame) return;
@@ -8422,23 +8812,20 @@
             painter.Clenaup();
       });
 
-      document.getElementById(this.frameid).innerHTML = '';
+      d3.select("#"+this.frameid).html('').property('mdi', null);
    }
 
    JSROOT.MDIDisplay.prototype.Draw = function(title, obj, drawopt) {
       // draw object with specified options
       if (!obj) return;
 
-      var frame = this.FindFrame(title);
-
       if (!JSROOT.canDraw(obj['_typename'], drawopt)) return;
 
-      if (frame == null)
-         frame = this.CreateFrame(title);
+      var frame = this.FindFrame(title, true);
 
       this.ActivateFrame(frame);
 
-      return JSROOT.redraw($(frame).attr("id"), obj, drawopt);
+      return JSROOT.redraw(d3.select(frame).attr("id"), obj, drawopt);
    }
 
 
@@ -8451,169 +8838,28 @@
    JSROOT.SimpleDisplay.prototype = Object.create(JSROOT.MDIDisplay.prototype);
 
    JSROOT.SimpleDisplay.prototype.ForEachFrame = function(userfunc,  only_visible) {
-      if (typeof userfunc != 'function') return;
-      if ($("#"+this.frameid).prop('title')!='')
-         userfunc($("#"+this.frameid));
+      var node = d3.select("#"+this.frameid + "_simple_display");
+      if (!node.empty())
+         JSROOT.CallBack(userfunc, node.node());
    }
 
    JSROOT.SimpleDisplay.prototype.CreateFrame = function(title) {
-      return $("#"+this.frameid).empty().prop('title', title);
+
+      return d3.select("#"+this.frameid)
+               .html("")
+               .append("div")
+               .attr("id", this.frameid + "_simple_display")
+               .style("width", "100%")
+               .style("height", "100%")
+               .style("overflow" ,"hidden")
+               .property("title", title)
+               .node();
    }
 
    JSROOT.SimpleDisplay.prototype.Reset = function() {
       JSROOT.MDIDisplay.prototype.Reset.call(this);
       // try to remove different properties from the div
-      $("#"+this.frameid).prop('title','').css('background','')
-                         .removeClass('ui-droppable ui-state-default');
-   }
-
-   // ==================================================
-
-   JSROOT.CollapsibleDisplay = function(frameid) {
-      JSROOT.MDIDisplay.call(this, frameid);
-      this.cnt = 0; // use to count newly created frames
-   }
-
-   JSROOT.CollapsibleDisplay.prototype = Object.create(JSROOT.MDIDisplay.prototype);
-
-   JSROOT.CollapsibleDisplay.prototype.ForEachFrame = function(userfunc,  only_visible) {
-      var topid = this.frameid + '_collapsible';
-
-      if (document.getElementById(topid) == null) return;
-
-      if (typeof userfunc != 'function') return;
-
-      $('#' + topid + ' .collapsible_draw').each(function() {
-
-         // check if only visible specified
-         if (only_visible && $(this).is(":hidden")) return;
-
-         userfunc($(this));
-      });
-   }
-
-   JSROOT.CollapsibleDisplay.prototype.ActivateFrame = function(frame) {
-      if ($(frame).is(":hidden")) {
-         $(frame).prev().toggleClass("ui-accordion-header-active ui-state-active ui-state-default ui-corner-bottom")
-                 .find("> .ui-icon").toggleClass("ui-icon-triangle-1-e ui-icon-triangle-1-s").end()
-                 .next().toggleClass("ui-accordion-content-active").slideDown(0);
-      }
-      $(frame).prev()[0].scrollIntoView();
-   }
-
-   JSROOT.CollapsibleDisplay.prototype.CreateFrame = function(title) {
-
-      var topid = this.frameid + '_collapsible';
-
-      if (document.getElementById(topid) == null)
-         $("#right-div").append('<div id="'+ topid  + '" class="ui-accordion ui-accordion-icons ui-widget ui-helper-reset" style="overflow:auto; overflow-y:scroll; height:100%; padding-left: 2px; padding-right: 2px"></div>');
-
-      var hid = topid + "_sub" + this.cnt++;
-      var uid = hid + "h";
-
-      var entryInfo = "<h5 id=\"" + uid + "\"><a> " + title + "</a>&nbsp; </h5>\n";
-      entryInfo += "<div class='collapsible_draw' id='" + hid + "'></div>\n";
-      $("#" + topid).append(entryInfo);
-
-      $('#' + uid)
-            .addClass("ui-accordion-header ui-helper-reset ui-state-default ui-corner-top ui-corner-bottom")
-            .hover(function() { $(this).toggleClass("ui-state-hover"); })
-            .prepend('<span class="ui-icon ui-icon-triangle-1-e"></span>')
-            .append('<button type="button" class="closeButton" title="close canvas" '+
-                    'onclick="javascript: $(this).parent().next().andSelf().remove();">'+
-                    '<img class="img_remove" src="" alt=""/></button>')
-            .click( function() {
-                     $(this).toggleClass("ui-accordion-header-active ui-state-active ui-state-default ui-corner-bottom")
-                           .find("> .ui-icon").toggleClass("ui-icon-triangle-1-e ui-icon-triangle-1-s")
-                           .end().next().toggleClass("ui-accordion-content-active").slideToggle(0);
-                     return false;
-                  })
-            .next()
-            .addClass("ui-accordion-content  ui-helper-reset ui-widget-content ui-corner-bottom")
-            .hide();
-
-      $('#' + uid)
-            .toggleClass("ui-accordion-header-active ui-state-active ui-state-default ui-corner-bottom")
-            .find("> .ui-icon").toggleClass("ui-icon-triangle-1-e ui-icon-triangle-1-s").end().next()
-            .toggleClass("ui-accordion-content-active").slideToggle(0);
-
-      // $('#'+uid)[0].scrollIntoView();
-
-      $("#" + hid).prop('title', title);
-
-      return $("#" + hid);
-   }
-
-   // ================================================
-
-   JSROOT.TabsDisplay = function(frameid) {
-      JSROOT.MDIDisplay.call(this, frameid);
-      this.cnt = 0;
-   }
-
-   JSROOT.TabsDisplay.prototype = Object.create(JSROOT.MDIDisplay.prototype);
-
-   JSROOT.TabsDisplay.prototype.ForEachFrame = function(userfunc, only_visible) {
-      var topid = this.frameid + '_tabs';
-
-      if (document.getElementById(topid) == null) return;
-
-      if (typeof userfunc != 'function') return;
-
-      var cnt = -1;
-      var active = $('#' + topid).tabs("option", "active");
-
-      $('#' + topid + ' .tabs_draw').each(function() {
-         // check if only_visible specified
-         if (only_visible && (cnt++ != active)) return;
-
-         userfunc($(this));
-      });
-   }
-
-   JSROOT.TabsDisplay.prototype.ActivateFrame = function(frame) {
-      var cnt = 0, id = -1;
-      this.ForEachFrame(function(fr) {
-         if ($(fr).attr('id') == frame.attr('id'))  id = cnt;
-         cnt++;
-      });
-
-      $('#' + this.frameid + "_tabs").tabs("option", "active", id);
-   }
-
-   JSROOT.TabsDisplay.prototype.CreateFrame = function(title) {
-      var topid = this.frameid + '_tabs';
-
-      var hid = topid + "_sub" + this.cnt++;
-
-      var li = '<li><a href="#' + hid + '">' + title
-            + '</a><span class="ui-icon ui-icon-close" role="presentation">Remove Tab</span></li>';
-      var cont = '<div class="tabs_draw" id="' + hid + '"></div>';
-
-      if (document.getElementById(topid) == null) {
-         $("#" + this.frameid).append('<div id="' + topid + '">' + ' <ul>' + li + ' </ul>' + cont + '</div>');
-
-         var tabs = $("#" + topid)
-                       .css('overflow','hidden')
-                       .tabs({ heightStyle : "fill" });
-
-         tabs.delegate("span.ui-icon-close", "click", function() {
-            var panelId = $(this).closest("li").remove().attr("aria-controls");
-            $("#" + panelId).remove();
-            tabs.tabs("refresh");
-         });
-      } else {
-
-         // var tabs = $("#tabs").tabs();
-
-         $("#" + topid).find(".ui-tabs-nav").append(li);
-         $("#" + topid).append(cont);
-         $("#" + topid).tabs("refresh");
-         $("#" + topid).tabs("option", "active", -1);
-      }
-      $('#' + hid).empty();
-      $('#' + hid).prop('title', title);
-      return $('#' + hid);
+      d3.select("#"+this.frameid).html("");
    }
 
    // ================================================
@@ -8641,16 +8887,12 @@
             sizey = sizex;
          }
 
-         if (sizex == NaN)
-            sizex = 3;
-         if (sizey == NaN)
-            sizey = 3;
+         if (sizex == NaN) sizex = 3;
+         if (sizey == NaN) sizey = 3;
       }
 
-      if (!sizex)
-         sizex = 3;
-      if (!sizey)
-         sizey = sizex;
+      if (!sizex) sizex = 3;
+      if (!sizey) sizey = sizex;
       this.sizex = sizex;
       this.sizey = sizey;
    }
@@ -8658,44 +8900,29 @@
    JSROOT.GridDisplay.prototype = Object.create(JSROOT.MDIDisplay.prototype);
 
    JSROOT.GridDisplay.prototype.IsSingle = function() {
-      return (this.sizex <= 1) && (this.sizey <= 1);
+      return (this.sizex == 1) && (this.sizey == 1);
    }
 
    JSROOT.GridDisplay.prototype.ForEachFrame = function(userfunc, only_visible) {
-      if (typeof userfunc != 'function') return;
-
-      if (this.IsSingle()) {
-         var elem = $("#"+this.frameid);
-         if (elem.prop('title')!=null)
-            userfunc(elem);
-         return;
-      }
-
-      var topid = this.frameid + '_grid';
-
-      if (document.getElementById(topid) == null) return;
-
       for (var cnt = 0; cnt < this.sizex * this.sizey; cnt++) {
+         var elem = this.IsSingle() ? d3.select("#"+this.frameid) : d3.select("#" + this.frameid + "_grid_" + cnt);
 
-         var elem = $( "#" + topid + "_" + cnt);
-
-         if (elem.prop('title')!="")
-            userfunc(elem);
+         if (!elem.empty() && elem.property('title') != '')
+            JSROOT.CallBack(userfunc, elem.node());
       }
    }
 
    JSROOT.GridDisplay.prototype.CreateFrame = function(title) {
 
-      var hid = this.frameid;
+      var main = d3.select("#" + this.frameid);
+      if (main.empty()) return null;
 
       if (!this.IsSingle()) {
          var topid = this.frameid + '_grid';
-         if (document.getElementById(topid) == null) {
-
-            var main = $("#" + this.frameid);
-
-            var h = Math.floor(main.height() / this.sizey) - 1;
-            var w = Math.floor(main.width() / this.sizex) - 1;
+         if (d3.select("#" + topid).empty()) {
+            var rect = main.node().getBoundingClientRect();
+            var h = Math.floor(rect.height / this.sizey) - 1;
+            var w = Math.floor(rect.width / this.sizex) - 1;
 
             var content = "<div style='width:100%; height:100%; margin:0; padding:0; border:0; overflow:hidden'>";
                content += "<table id='" + topid + "' style='width:100%; height:100%; table-layout:fixed; border-collapse: collapse;'>";
@@ -8703,78 +8930,43 @@
             for (var i = 0; i < this.sizey; i++) {
                content += "<tr>";
                for (var j = 0; j < this.sizex; j++)
-                  content += "<td><div id='" + topid + "_" + cnt++ + "'></div></td>";
+                  content += "<td><div id='" + topid + "_" + cnt++ + "' class='grid_cell'></div></td>";
                content += "</tr>";
             }
             content += "</table></div>";
 
-            main.empty();
-            main.append(content);
-
-            main.find("[id^=" + this.frameid + "_grid_]").width(w).height(h);
-//              .droppable({ accepted: ".h_item", drop: function(event, ui) { console.log("drop!"); } });
+            main.html(content);
+            main.selectAll('.grid_cell').style({ 'width':  w + 'px', 'height': h + 'px', 'overflow' : 'hidden'});
          }
 
-         hid = topid + "_" + this.cnt;
+         main = d3.select( "#" + topid + "_" + this.cnt);
          if (++this.cnt >= this.sizex * this.sizey) this.cnt = 0;
       }
 
-      $("#" + hid).empty();
-      $("#" + hid).prop('title', title);
-
-      return $('#' + hid);
+      return main.html("").property('title', title).node();
    }
 
    JSROOT.GridDisplay.prototype.Reset = function() {
       JSROOT.MDIDisplay.prototype.Reset.call(this);
       if (this.IsSingle())
-         $("#" + this.frameid).prop('title', null);
+         d3.select("#" + this.frameid).property('title', null);
       this.cnt = 0;
    }
 
    JSROOT.GridDisplay.prototype.CheckResize = function() {
 
-      var main = $("#" + this.frameid);
-
-      var h = Math.floor(main.height() / this.sizey) - 1;
-      var w = Math.floor(main.width() / this.sizex) - 1;
-
-      main.find("[id^=" + this.frameid + "_grid_]").height(h).width(w);
+      if (!this.IsSingle()) {
+         var main = d3.select("#" + this.frameid);
+         var rect = main.node().getBoundingClientRect();
+         var h = Math.floor(rect.height / this.sizey) - 1;
+         var w = Math.floor(rect.width / this.sizex) - 1;
+         main.selectAll('.grid_cell').style({ 'width':  w + 'px', 'height': h + 'px'});
+      }
 
       JSROOT.MDIDisplay.prototype.CheckResize.call(this);
    }
 
    // =========================================================================
-
-   JSROOT.ConfigureVSeparator = function(handle, leftdiv, separdiv, rightdiv) {
-      if (!leftdiv) leftdiv = "left-div";
-      if (!separdiv) separdiv = "separator-div";
-      if (!rightdiv) rightdiv = "right-div";
-
-      function adjustSize(left, firsttime) {
-         var diff = $("#"+leftdiv).outerWidth() - $("#"+leftdiv).width();
-         var w = JSROOT.touches ? 10 : 4;
-
-         $("#"+separdiv).css('left', left.toString() + "px").width(w);
-         $("#"+leftdiv).width(left-diff-1);
-         $("#"+rightdiv).css('left',(left+w).toString() + "px");
-         if (firsttime || (handle==null)) return;
-
-         if (typeof handle == 'function') handle(); else
-         if ((typeof handle == 'object') && (typeof handle['CheckResize'] == 'function')) handle.CheckResize();
-      }
-
-      $("#"+separdiv).draggable({
-         axis: "x" , zIndex: 100, cursor: "ew-resize",
-         helper : function() { return $("#"+separdiv).clone().css('background-color','grey'); },
-         stop: function(event,ui) { event.stopPropagation(); adjustSize(ui.position.left, false); }
-      });
-
-      var w0 = Math.round($(window).width() * 0.2);
-      if (w0<300) w0 = Math.min(300, Math.round($(window).width() * 0.5));
-
-      adjustSize(w0, true);
-   }
 
    JSROOT.RegisterForResize = function(handle, delay) {
       // function used to react on browser window resize event
@@ -8803,7 +8995,26 @@
 
          document.body.style.cursor = 'wait';
          if (typeof handle == 'function') handle(); else
-         if ((typeof handle == 'object') && (typeof handle['CheckResize'] == 'function')) handle.CheckResize();
+         if ((typeof handle == 'object') && (typeof handle['CheckResize'] == 'function')) handle.CheckResize(); else
+         if (typeof handle == 'string') {
+            var node = d3.select('#'+handle);
+            if (!node.empty()) {
+               var mdi = node.property('mdi');
+               if (mdi) {
+                  mdi.CheckResize();
+               } else {
+                  var dummy = new JSROOT.TObjectPainter();
+                  var first = true;
+                  dummy.SetDivId(handle, -1);
+                  dummy.ForEachPainter(function(painter) {
+                     if (first && (typeof painter['CheckResize'] == 'function')) {
+                        first = false;
+                        painter.CheckResize();
+                     }
+                  });
+               }
+            }
+         }
          document.body.style.cursor = 'auto';
       }
 
@@ -8824,10 +9035,11 @@
    JSROOT.addDrawFunc("TPaveText", JSROOT.Painter.drawPaveText);
    JSROOT.addDrawFunc("TPaveStats", JSROOT.Painter.drawPaveText);
    JSROOT.addDrawFunc("TLatex", JSROOT.Painter.drawText);
+   JSROOT.addDrawFunc("TMathText", JSROOT.Painter.drawText);
    JSROOT.addDrawFunc("TText", JSROOT.Painter.drawText);
    JSROOT.addDrawFunc("TPaveLabel", JSROOT.Painter.drawText);
-   JSROOT.addDrawFunc(/^TH1/, JSROOT.Painter.drawHistogram1D, ";P;P0;same");
-   JSROOT.addDrawFunc("TProfile", JSROOT.Painter.drawHistogram1D, ";E1");
+   JSROOT.addDrawFunc(/^TH1/, JSROOT.Painter.drawHistogram1D, ";P;P0;E;E1;E2;same");
+   JSROOT.addDrawFunc("TProfile", JSROOT.Painter.drawHistogram1D, ";E1;E2");
    JSROOT.addDrawFunc(/^TH2/, JSROOT.Painter.drawHistogram2D, ";COL;COLZ;COL3;LEGO;same");
    JSROOT.addDrawFunc(/^TH3/, JSROOT.Painter.drawHistogram3D);
    JSROOT.addDrawFunc("THStack", JSROOT.Painter.drawHStack);
@@ -8838,6 +9050,7 @@
    JSROOT.addDrawFunc(/^RooCurve/, JSROOT.Painter.drawGraph,";L;P");
    JSROOT.addDrawFunc("TMultiGraph", JSROOT.Painter.drawMultiGraph);
    JSROOT.addDrawFunc("TStreamerInfoList", JSROOT.Painter.drawStreamerInfo);
+   JSROOT.addDrawFunc("TPaletteAxis", JSROOT.Painter.drawPaletteAxis);
    JSROOT.addDrawFunc("kind:Text", JSROOT.Painter.drawRawText);
 
    JSROOT.getDrawFunc = function(classname, drawopt) {
@@ -8912,9 +9125,35 @@
       if ('_typename' in obj) draw_func = JSROOT.getDrawFunc(obj['_typename'], opt);
       else if ('_kind' in obj) draw_func = JSROOT.getDrawFunc('kind:' + obj['_kind'], opt);
 
-      if (draw_func==null) return null;
+      if (typeof draw_func == 'function') return draw_func(divid, obj, opt);
 
-      return draw_func(divid, obj, opt);
+      if ((draw_func!=null) && (typeof draw_func == 'object') &&
+          (typeof draw_func['script']=='string') &&
+          (typeof draw_func['func']=='string')) {
+         // special case - function should be loaded from external script
+         var func = JSROOT.findFunction(draw_func['func']);
+         if (func!=null) return func(divid, obj, opt);
+
+         // we create dummy object, which should be completed in painter
+         var painter = new JSROOT.TBasePainter();
+
+         JSROOT.AssertPrerequisites("user:" + draw_func['script'], function() {
+            func = JSROOT.findFunction(draw_func['func']);
+            if (func==null) {
+               alert('Fail to find function ' + draw_func['func'] + ' after loading script ' + draw_func['script']);
+               return null;
+            }
+
+            var ppp = func(divid, obj, opt, painter);
+
+            if (ppp !== painter)
+               alert('Painter function ' + draw_func['func'] + ' do not follow rules of dynamic_loaded painters ');
+         });
+
+         return painter;
+      }
+
+      return null;
    }
 
    /** @fn JSROOT.redraw(divid, obj, opt)
@@ -8926,7 +9165,7 @@
       if (obj==null) return;
 
       var can = d3.select("#" + divid + " .root_canvas");
-      var can_painter = can.node() ? can.node()['pad_painter'] : null;
+      var can_painter = can.empty() ? null : can.property('pad_painter');
 
       if (can_painter != null) {
          if (obj._typename=="TCanvas") {
@@ -8946,9 +9185,9 @@
       }
 
       if (can_painter)
-          console.log("Cannot find painter to update object of type " + obj._typename);
+          JSROOT.console("Cannot find painter to update object of type " + obj._typename);
 
-      $("#"+divid).empty();
+      d3.select("#"+divid).html("");
       return JSROOT.draw(divid, obj, opt);
    }
 
@@ -8963,7 +9202,7 @@
  (function(){
 
  Amore_String_Streamer = function(buf, obj, prop, streamer) {
-    console.log("read property " + prop + " of typename " + streamer[prop]['typename']);
+    JSROOT.console("read property " + prop + " of typename " + streamer[prop]['typename']);
     obj[prop] = buf.ReadTString();
  }
 
